@@ -1,0 +1,126 @@
+name: Daily memory extraction
+
+# Contrato de comportamiento de este workflow: program.md (raíz del repo).
+# Vocabulario usado para estructurar lo que se extrae: schema/graph-vocabulary.md.
+
+"on":
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: daily-memory-${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  extract-and-propose:
+    name: Extract knowledge and propose a PR to DockerSwarmDocs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout DockerSwarmMemoria (this repo)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+        with:
+          path: memoria-bot
+          persist-credentials: false
+
+      # Lectura de solo lectura de la fuente de verdad de infraestructura.
+      # Este bot NUNCA escribe en DockerSwarmInfrastrcture (ver program.md, §3).
+      #
+      # TODO(humano): crear el secret DOCKERSWARM_BOT_PAT en este repo
+      # (Settings > Secrets and variables > Actions > New repository secret).
+      # Debe ser un token (fine-grained PAT recomendado) con permiso de
+      # lectura sobre el repo privado apptolast/DockerSwarmInfrastrcture y
+      # permiso de lectura/escritura de contenidos y pull requests sobre
+      # apptolast/DockerSwarmDocs (necesario para el paso de PR más abajo).
+      # Sin este secret, los dos checkouts siguientes y la apertura de PR
+      # fallarán: eso es el comportamiento esperado hasta que el secret
+      # exista, no un bug de este workflow.
+      - name: Checkout DockerSwarmInfrastrcture (read-only source of truth)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+        with:
+          repository: apptolast/DockerSwarmInfrastrcture
+          token: ${{ secrets.DOCKERSWARM_BOT_PAT }}
+          path: dockerswarm-infra
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Checkout DockerSwarmDocs (pull request target)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+        with:
+          repository: apptolast/DockerSwarmDocs
+          token: ${{ secrets.DOCKERSWARM_BOT_PAT }}
+          path: dockerswarm-docs
+          persist-credentials: false
+
+      # TODO(humano): sustituir este paso por la extracción real.
+      #
+      # Esta ejecución de ejemplo no lee ni escribe nada real: es un
+      # placeholder deliberado. La implementación real deberá:
+      #   1. Leer commits/docs recientes bajo dockerswarm-infra/ (docs/,
+      #      CHANGELOG.md, ansible/, stacks/, etc.), usando como referencia
+      #      el último commit ya procesado (guardado en memoria-bot/memoria/).
+      #   2. Destilar decisiones/patrones/incidentes verificables, citando
+      #      siempre su fuente exacta (path + commit).
+      #   3. Escribir el resultado como Markdown con el frontmatter completo
+      #      exigido por el contrato de sistema-central-admin-servidor,
+      #      dentro de dockerswarm-docs/.
+      #   4. Marcar "TODO: verificar" cualquier dato que no se pueda
+      #      verificar contra dockerswarm-infra/, sin inventarlo (ver
+      #      program.md, §6-§7).
+      #   5. Respetar el presupuesto de program.md, §4 (máximo de ficheros
+      #      tocados por PR, timeout del job, etc.).
+      - name: "TODO(humano): ejecutar la extracción real"
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          echo "TODO(humano): sustituir por la extraccion real."
+          echo "Placeholder: no se ha implementado todavia ningun analisis."
+          echo "Cuando exista CLAUDE_CODE_OAUTH_TOKEN, este paso invocaria"
+          echo "al agente para leer dockerswarm-infra/ y escribir los .md"
+          echo "resultantes (con frontmatter) dentro de dockerswarm-docs/."
+          echo "Hoy este paso no modifica dockerswarm-docs/ en absoluto."
+
+      - name: Check for real changes
+        id: diff
+        working-directory: dockerswarm-docs
+        run: |
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No hay cambios reales que proponer esta ejecucion."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Se han detectado cambios candidatos."
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Abre PR contra DockerSwarmDocs solo si hubo cambios reales.
+      # NUNCA auto-merge: siempre requiere revisión y merge humano explícito
+      # (ver program.md, §6 y §7). El "draft: true" es una barrera adicional
+      # intencional, no solo informativa.
+      - name: Open pull request against DockerSwarmDocs (never auto-merge)
+        if: steps.diff.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1  # v8
+        with:
+          token: ${{ secrets.DOCKERSWARM_BOT_PAT }}
+          path: dockerswarm-docs
+          commit-message: "docs: propose daily memory update from DockerSwarmInfrastrcture"
+          branch: bot/daily-memory-${{ github.run_id }}
+          title: "docs: daily memory update (auto-generated, needs human review)"
+          body: |
+            Generado automáticamente por `apptolast/DockerSwarmMemoria`
+            (workflow `daily-memory.yml`, ejecución `${{ github.run_id }}`).
+
+            Esta PR **nunca se auto-fusiona**. Requiere revisión y merge
+            humano explícito, según `program.md` de DockerSwarmMemoria.
+
+            Cualquier dato marcado `TODO: verificar` no ha podido
+            confirmarse contra `apptolast/DockerSwarmInfrastrcture` y no
+            debe darse por cierto sin comprobarlo.
+          labels: |
+            automated-pr
+          draft: true
