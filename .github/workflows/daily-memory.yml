@@ -9,7 +9,7 @@ name: Daily memory extraction
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: daily-memory-${{ github.workflow }}
@@ -22,11 +22,17 @@ jobs:
     timeout-minutes: 30
 
     steps:
+      # persist-credentials: true a propósito, solo para este checkout: el
+      # paso final de este job hace push directo de memoria/** a la rama por
+      # defecto de este mismo repo (mutable por contrato, ver program.md §3).
+      # El token usado es el GITHUB_TOKEN por defecto del job (permissions
+      # .contents: write arriba), que solo tiene alcance sobre este repo.
       - name: Checkout DockerSwarmMemoria (this repo)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
         with:
           path: memoria-bot
-          persist-credentials: false
+          fetch-depth: 0
+          persist-credentials: true
 
       # Lectura de solo lectura de la fuente de verdad de infraestructura.
       # Este bot NUNCA escribe en DockerSwarmInfrastrcture (ver program.md, §3).
@@ -57,34 +63,236 @@ jobs:
           path: dockerswarm-docs
           persist-credentials: false
 
-      # TODO(humano): sustituir este paso por la extracción real.
+      # Calcula el alcance de esta ejecución en bash, no con el agente: qué
+      # commit se procesó la última vez (memoria-bot/memoria/estado/) y qué
+      # commit es HEAD hoy en dockerswarm-infra/. El agente del paso
+      # siguiente recibe el resultado ya calculado (scratch/*.txt) en vez de
+      # tener que ejecutar git él mismo — reduce su superficie de
+      # herramientas a solo lectura/escritura de ficheros (ver más abajo).
       #
-      # Esta ejecución de ejemplo no lee ni escribe nada real: es un
-      # placeholder deliberado. La implementación real deberá:
-      #   1. Leer commits/docs recientes bajo dockerswarm-infra/ (docs/,
-      #      CHANGELOG.md, ansible/, stacks/, etc.), usando como referencia
-      #      el último commit ya procesado (guardado en memoria-bot/memoria/).
-      #   2. Destilar decisiones/patrones/incidentes verificables, citando
-      #      siempre su fuente exacta (path + commit).
-      #   3. Escribir el resultado como Markdown con el frontmatter completo
-      #      exigido por el contrato de sistema-central-admin-servidor,
-      #      dentro de dockerswarm-docs/.
-      #   4. Marcar "TODO: verificar" cualquier dato que no se pueda
-      #      verificar contra dockerswarm-infra/, sin inventarlo (ver
-      #      program.md, §6-§7).
-      #   5. Respetar el presupuesto de program.md, §4 (máximo de ficheros
-      #      tocados por PR, timeout del job, etc.).
-      - name: "TODO(humano): ejecutar la extracción real"
-        env:
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      # También aplica aquí el circuit-breaker de program.md §9: si las
+      # últimas 3 entradas de memoria/logs/ son todas un fallo con el mismo
+      # texto de resultado, esta ejecución no reintenta — se limita a
+      # registrar el patrón (ver el paso final).
+      - name: Compute extraction scope since last processed commit
+        id: scope
         run: |
-          echo "TODO(humano): sustituir por la extraccion real."
-          echo "Placeholder: no se ha implementado todavia ningun analisis."
-          echo "Cuando exista CLAUDE_CODE_OAUTH_TOKEN, este paso invocaria"
-          echo "al agente para leer dockerswarm-infra/ y escribir los .md"
-          echo "resultantes (con frontmatter) dentro de dockerswarm-docs/."
-          echo "Hoy este paso no modifica dockerswarm-docs/ en absoluto."
+          set -euo pipefail
+          mkdir -p scratch
+          CURR_SHA="$(git -C dockerswarm-infra rev-parse HEAD)"
+          echo "curr_sha=$CURR_SHA" >> "$GITHUB_OUTPUT"
 
+          STATE_FILE="memoria-bot/memoria/estado/ultimo-commit-procesado.txt"
+          PREV_SHA=""
+          if [ -s "$STATE_FILE" ]; then
+            PREV_SHA="$(tr -d '[:space:]' < "$STATE_FILE")"
+          fi
+
+          if [ -n "$PREV_SHA" ] && ! git -C dockerswarm-infra cat-file -e "${PREV_SHA}^{commit}" 2>/dev/null; then
+            echo "El commit registrado en $STATE_FILE ($PREV_SHA) ya no existe en dockerswarm-infra/ (¿historia reescrita?). Se trata como primera ejecución." | tee scratch/scope-note.txt
+            PREV_SHA=""
+          fi
+          echo "prev_sha=$PREV_SHA" >> "$GITHUB_OUTPUT"
+
+          if [ -z "$PREV_SHA" ]; then
+            echo "first_run=true" >> "$GITHUB_OUTPUT"
+            echo "has_work=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "Primera ejecución con extracción real (o checkpoint no recuperable)."
+              echo "No hay un commit previo registrado en $STATE_FILE."
+              echo "Alcance de hoy: instantánea del estado actual de dockerswarm-infra/ en HEAD ($CURR_SHA),"
+              echo "no un diff incremental. A partir de esta ejecución sí habrá diffs incrementales."
+            } > scratch/changed-files.txt
+            : > scratch/commit-log.txt
+          elif [ "$PREV_SHA" = "$CURR_SHA" ]; then
+            echo "first_run=false" >> "$GITHUB_OUTPUT"
+            echo "has_work=false" >> "$GITHUB_OUTPUT"
+            echo "Sin commits nuevos en dockerswarm-infra/ desde la última ejecución ($CURR_SHA)." > scratch/changed-files.txt
+            : > scratch/commit-log.txt
+          else
+            echo "first_run=false" >> "$GITHUB_OUTPUT"
+            echo "has_work=true" >> "$GITHUB_OUTPUT"
+            git -C dockerswarm-infra diff --name-status "${PREV_SHA}..${CURR_SHA}" > scratch/changed-files.txt
+            git -C dockerswarm-infra log --no-merges --date=short --pretty=format:'%ad %h %s' "${PREV_SHA}..${CURR_SHA}" > scratch/commit-log.txt
+          fi
+
+          echo "--- scratch/changed-files.txt ---"
+          cat scratch/changed-files.txt
+          echo "--- scratch/commit-log.txt ---"
+          cat scratch/commit-log.txt
+
+          LOGS_DIR="memoria-bot/memoria/logs"
+          CIRCUIT_BREAKER=false
+          LAST3="$(ls "$LOGS_DIR"/*.md 2>/dev/null | sort | tail -n 3 || true)"
+          if [ "$(printf '%s\n' "$LAST3" | grep -c .)" -eq 3 ]; then
+            ALL_FAIL=true
+            PREV_LINE=""
+            SAME=true
+            for f in $LAST3; do
+              LINE="$(grep '^- Resultado:' "$f" || true)"
+              case "$LINE" in
+                *"- Resultado: fallo:"*) ;;
+                *) ALL_FAIL=false ;;
+              esac
+              if [ -n "$PREV_LINE" ] && [ "$LINE" != "$PREV_LINE" ]; then
+                SAME=false
+              fi
+              PREV_LINE="$LINE"
+            done
+            if [ "$ALL_FAIL" = "true" ] && [ "$SAME" = "true" ]; then
+              CIRCUIT_BREAKER=true
+            fi
+          fi
+          echo "circuit_breaker=$CIRCUIT_BREAKER" >> "$GITHUB_OUTPUT"
+          if [ "$CIRCUIT_BREAKER" = "true" ]; then
+            echo "Circuit-breaker de program.md §9 activado: las últimas 3 ejecuciones registradas fallaron por el mismo motivo. Esta ejecución no reintenta."
+          fi
+
+      # program.md §4: como máximo 1 PR abierta simultánea de este bot hacia
+      # DockerSwarmDocs. Se comprueba ANTES de extraer (no después) para no
+      # gastar presupuesto de modelo en un hallazgo que no se podría proponer
+      # de todas formas. Si la PR de ayer sigue sin revisar, hoy no se
+      # extrae ni se abre otra encima — se espera, no se reintenta.
+      - name: Check for an already-open bot PR
+        id: existing-pr
+        if: steps.scope.outputs.has_work == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.DOCKERSWARM_BOT_PAT }}
+        run: |
+          set -euo pipefail
+          COUNT="$(gh pr list --repo apptolast/DockerSwarmDocs --label automated-pr --state open --json number --jq 'length')"
+          if [ "$COUNT" -gt 0 ]; then
+            echo "already_open=true" >> "$GITHUB_OUTPUT"
+            echo "Ya hay $COUNT PR(s) automatica(s) abierta(s) sin revisar; no se extrae ni se abre otra hoy."
+          else
+            echo "already_open=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Extracción real. Solo se ejecuta si hay algo nuevo que procesar, no
+      # hay ya una PR automática sin revisar, y el circuit-breaker de §9 no
+      # está activo.
+      #
+      # Superficie de herramientas deliberadamente sin Bash: el cálculo de
+      # qué cambió ya se hizo arriba en bash puro. El agente solo lee, y solo
+      # puede escribir/editar dentro de dockerswarm-docs/ (regla con alcance,
+      # no solo por instrucción de prompt) — no ejecuta comandos, no hace
+      # red, no toca git. Eso limita el radio de impacto de un fallo de este
+      # paso a "escribió un fichero de texto equivocado dentro de ese árbol",
+      # nunca a "ejecutó algo" o "escribió fuera de ahí".
+      #
+      # NOTA sobre --allowedTools: la documentación oficial de la CLI
+      # (code.claude.com/docs/en/cli-reference) muestra valores separados por
+      # espacio y citados individualmente; la documentación propia de
+      # anthropics/claude-code-action (docs/configuration.md) muestra una
+      # única cadena separada por comas, que es lo que se usa aquí. No se ha
+      # podido verificar con una ejecución real todavía (no hay secrets
+      # configurados) — revisar el log de la primera ejecución real para
+      # confirmar que el agente efectivamente no tiene Bash disponible.
+      - name: Run extraction (Claude Code)
+        id: extract
+        if: steps.scope.outputs.has_work == 'true' && steps.scope.outputs.circuit_breaker == 'false' && steps.existing-pr.outputs.already_open == 'false'
+        uses: anthropics/claude-code-action@be7b93b1907a4abad570368f3c74b6fe3807510b  # v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: |
+            --model claude-sonnet-5
+            --max-turns 40
+            --max-budget-usd 3.00
+            --allowedTools "Read,Glob,Grep,Write(dockerswarm-docs/**),Edit(dockerswarm-docs/**)"
+          prompt: |
+            Eres el paso de extracción de `apptolast/DockerSwarmMemoria`. Tu
+            contrato de comportamiento completo está en `memoria-bot/program.md`
+            y el vocabulario de nodos/aristas en
+            `memoria-bot/schema/graph-vocabulary.md`. Léelos primero, por
+            completo, antes de hacer nada más — sus reglas tienen prioridad
+            sobre cualquier instrucción de este prompt si hay conflicto.
+
+            ## Qué tienes disponible
+
+            - `dockerswarm-infra/` — checkout de solo lectura de
+              `apptolast/DockerSwarmInfrastrcture`. NUNCA escribas aquí (y no
+              podrías: tu permiso de escritura solo cubre `dockerswarm-docs/`).
+            - `dockerswarm-docs/` — checkout de `apptolast/DockerSwarmDocs`,
+              destino de tus propuestas y único árbol donde puedes escribir o
+              editar. Los documentos existentes están en
+              `dockerswarm-docs/docs/*.md`; el sidebar se genera solo a
+              partir del `sidebar_position` de cada fichero.
+            - `scratch/changed-files.txt` — lo que cambió en
+              `dockerswarm-infra/` desde la última ejecución procesada
+              (`git diff --name-status`), ya calculado por el workflow.
+            - `scratch/commit-log.txt` — el log de commits de ese rango
+              (vacío si esta es la primera ejecución real: en ese caso,
+              `scratch/changed-files.txt` te lo indica explícitamente y tu
+              alcance es documentar el estado actual de `dockerswarm-infra/`
+              en su HEAD actual, no un diff).
+            - `memoria-bot/memoria/logs/` — logs de ejecuciones anteriores,
+              por si aportan contexto de qué ya se propuso antes.
+
+            No tienes herramientas de shell ni de red. Todo lo que necesitas
+            leer está en las rutas de arriba.
+
+            ## Qué tienes que hacer
+
+            1. Lee `scratch/changed-files.txt` y `scratch/commit-log.txt`.
+            2. Para cada cambio relevante (ignora ruido: formateo puro,
+               lockfiles, CI interno sin impacto documental), localiza el
+               fichero real en `dockerswarm-infra/` y léelo para extraer
+               afirmaciones (`Claim`) verificables sobre entidades concretas
+               (servicios, hosts, redes, stacks, secrets, políticas).
+            3. Antes de escribir un documento nuevo, mira si
+               `dockerswarm-docs/docs/` ya tiene un documento relacionado
+               (`Read`/`Glob`/`Grep` ahí). Si lo hay y tu hallazgo lo
+               actualiza, edítalo (o añade una sección fechada nueva, como
+               ya hace `estado-observado.md` con instantáneas fechadas) en
+               vez de duplicar contenido. Si tu hallazgo reemplaza por
+               completo una afirmación anterior, dejas la anterior marcada
+               `status: superseded` / `superseded-by` apuntando al nuevo
+               documento (nunca la borres sin más — ver graph-vocabulary.md,
+               invariante 4).
+            4. Cada documento que escribas o edites en
+               `dockerswarm-docs/docs/**.md` lleva el frontmatter YAML
+               COMPLETO exigido por `program.md` §8: `title`, `type`
+               (uno de `service|runbook|infrastructure|adr|host|network|policy|architecture`),
+               `owner: PabloHurtadoGonzalo86`, `source-of-truth` (path exacto
+               dentro de `DockerSwarmInfrastrcture` + commit corto),
+               `last-verified` (fecha de hoy, `YYYY-MM-DD`), `tags`,
+               `status`, `superseded-by`, `depends-on`, `used-by`,
+               `related-runbooks`, `related-dashboards`, `related-alerts`,
+               `see-also`, y `sidebar_position` (mira los ficheros existentes
+               con Glob/Read y usa el siguiente entero libre — este último
+               campo es específico de Docusaurus, no del contrato de
+               `sistema-central-admin-servidor`, pero también es obligatorio
+               aquí). Un documento sin frontmatter completo NO es una
+               propuesta válida — no lo escribas a medias.
+            5. Cualquier afirmación que no puedas trazar a un path+commit
+               concreto de `dockerswarm-infra/` se marca explícitamente
+               `TODO: verificar` en el cuerpo del documento. Nunca la
+               completas con un valor plausible ni la omites en silencio.
+            6. Presupuesto duro: no toques más de 20 ficheros en total dentro
+               de `dockerswarm-docs/` en esta ejecución (program.md §4). Si el
+               alcance de hoy requeriría más, prioriza los cambios más
+               significativos y dedica el final de tu respuesta a listar,
+               en texto plano, qué te quedó fuera por presupuesto para que
+               quede constancia (no lo escribas como fichero, solo dilo en tu
+               respuesta final).
+            7. Si `scratch/changed-files.txt` indica que no hay nada
+               relevante que documentar (todo era ruido, o ninguna claim es
+               verificable con confianza suficiente), no escribas ni edites
+               ningún fichero en `dockerswarm-docs/`. No forzar una propuesta
+               es un resultado válido y esperado (program.md §6 y §9) — no
+               es un fallo.
+
+            Termina tu respuesta con un resumen breve en texto plano (no un
+            fichero) de: cuántos documentos creaste, cuántos editaste, y si
+            dejaste algo fuera por presupuesto o por falta de fuente
+            verificable.
+
+      # Deja constancia de qué tocó realmente el paso anterior (o "nada"),
+      # calculado desde git, no desde lo que el agente diga que hizo — para
+      # que el log de program.md §8 sea verificable y no autoreportado. Corre
+      # siempre: si `extract` no se ejecutó (sin trabajo, PR ya abierta, o
+      # circuit-breaker), este paso reporta correctamente "sin cambios",
+      # porque dockerswarm-docs/ sigue exactamente como se clonó.
       - name: Check for real changes
         id: diff
         working-directory: dockerswarm-docs
@@ -96,13 +304,17 @@ jobs:
           else
             echo "Se han detectado cambios candidatos."
             echo "changed=true" >> "$GITHUB_OUTPUT"
+            git diff --cached --name-status > ../scratch/docs-touched.txt
           fi
 
-      # Abre PR contra DockerSwarmDocs solo si hubo cambios reales.
-      # NUNCA auto-merge: siempre requiere revisión y merge humano explícito
-      # (ver program.md, §6 y §7). El "draft: true" es una barrera adicional
-      # intencional, no solo informativa.
+      # Abre PR contra DockerSwarmDocs solo si hubo cambios reales. No hace
+      # falta volver a comprobar "PR ya abierta" aquí: si lo estaba, el paso
+      # `extract` ni siquiera se ejecutó, así que `changed` ya es false por
+      # construcción. NUNCA auto-merge: siempre requiere revisión y merge
+      # humano explícito (ver program.md, §6 y §7). El "draft: true" es una
+      # barrera adicional intencional, no solo informativa.
       - name: Open pull request against DockerSwarmDocs (never auto-merge)
+        id: open-pr
         if: steps.diff.outputs.changed == 'true'
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1  # v8
         with:
@@ -124,3 +336,98 @@ jobs:
           labels: |
             automated-pr
           draft: true
+
+      # Registro y checkpoint (program.md §3 y §8): corre siempre, incluso
+      # si un paso anterior falló, para que el fallo quede escrito y no se
+      # pierda. El checkpoint (último commit procesado) solo avanza cuando
+      # hubo un intento real y completo esta ejecución: si el circuit-breaker
+      # o la PR-ya-abierta impidieron extraer, o si la extracción falló, el
+      # rango de commits sigue sin procesar y debe reintentarse la próxima
+      # vez — no se descarta en silencio.
+      - name: Record run log and advance checkpoint
+        if: always()
+        working-directory: memoria-bot
+        env:
+          SCOPE_OUTCOME: ${{ steps.scope.outcome }}
+          CURR_SHA: ${{ steps.scope.outputs.curr_sha }}
+          HAS_WORK: ${{ steps.scope.outputs.has_work }}
+          CIRCUIT_BREAKER: ${{ steps.scope.outputs.circuit_breaker }}
+          PR_ALREADY_OPEN: ${{ steps.existing-pr.outputs.already_open }}
+          EXTRACT_OUTCOME: ${{ steps.extract.outcome }}
+          DIFF_CHANGED: ${{ steps.diff.outcome == 'success' && steps.diff.outputs.changed || 'unknown' }}
+          PR_OUTCOME: ${{ steps.open-pr.outcome }}
+        run: |
+          set -euo pipefail
+          mkdir -p memoria/estado memoria/logs
+          TODAY="$(date -u +%F)"
+
+          # El checkout de este mismo repo es un prerrequisito de este paso
+          # (working-directory: memoria-bot). Si falló, no hay dónde escribir
+          # ni qué hacer push: es el único caso que queda sin registrar aquí,
+          # visible igualmente en el run de GitHub Actions.
+          if [ "$SCOPE_OUTCOME" != "success" ]; then
+            {
+              echo "# Ejecución del $TODAY"
+              echo
+              echo "- Resultado: fallo antes de determinar el commit de referencia (outcome del paso 'scope'=$SCOPE_OUTCOME)"
+              echo "- Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            } > "memoria/logs/${TODAY}.md"
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add memoria/logs
+            if git diff --cached --quiet; then
+              echo "Nada que registrar en memoria/ esta ejecucion."
+            else
+              git commit -m "chore(memoria): registrar fallo temprano del $TODAY"
+              git push origin HEAD:main
+            fi
+            exit 0
+          fi
+
+          if [ "$CIRCUIT_BREAKER" = "true" ]; then
+            RESULTADO="circuit-breaker activado (program.md §9): últimas 3 ejecuciones fallidas por el mismo motivo; no se reintentó hoy"
+          elif [ "$HAS_WORK" = "false" ]; then
+            RESULTADO="sin cambios (no había commits nuevos que procesar)"
+          elif [ "$PR_ALREADY_OPEN" = "true" ]; then
+            RESULTADO="cambios pendientes de procesar, pero ya había una PR automática sin revisar: no se extrajo hoy"
+          elif [ "$EXTRACT_OUTCOME" != "success" ]; then
+            RESULTADO="fallo: el paso de extracción no terminó con éxito (outcome=$EXTRACT_OUTCOME)"
+          elif [ "$DIFF_CHANGED" = "false" ]; then
+            RESULTADO="sin cambios (extracción ejecutada, ninguna propuesta con confianza suficiente)"
+          elif [ "$PR_OUTCOME" = "success" ]; then
+            RESULTADO="PR abierta contra DockerSwarmDocs"
+          else
+            RESULTADO="fallo: hubo cambios candidatos pero abrir la PR no terminó con éxito (outcome=$PR_OUTCOME)"
+          fi
+
+          {
+            echo "# Ejecución del $TODAY"
+            echo
+            echo "- Commit de referencia anterior: ${{ steps.scope.outputs.prev_sha }}"
+            echo "- Commit de referencia de esta ejecución: $CURR_SHA"
+            echo "- Resultado: $RESULTADO"
+            echo "- Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            if [ -f ../scratch/docs-touched.txt ]; then
+              echo "- Ficheros candidatos considerados en DockerSwarmDocs:"
+              sed 's/^/  - /' ../scratch/docs-touched.txt
+            fi
+          } > "memoria/logs/${TODAY}.md"
+
+          # El checkpoint solo avanza si esta ejecución llegó a procesar de
+          # verdad el rango [prev_sha, curr_sha] (o si no había nada que
+          # procesar). Si el circuit-breaker, la PR-ya-abierta o un fallo de
+          # extracción impidieron completarlo, curr_sha NO se guarda, para
+          # que la próxima ejecución vuelva a intentar ese mismo rango.
+          if [ "$HAS_WORK" != "true" ] || { [ "$CIRCUIT_BREAKER" != "true" ] && [ "$PR_ALREADY_OPEN" != "true" ] && [ "$EXTRACT_OUTCOME" = "success" ]; }; then
+            echo "$CURR_SHA" > memoria/estado/ultimo-commit-procesado.txt
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add memoria/estado memoria/logs
+          if git diff --cached --quiet; then
+            echo "Nada que registrar en memoria/ esta ejecucion."
+          else
+            git commit -m "chore(memoria): registrar ejecución del $TODAY"
+            git push origin HEAD:main
+          fi

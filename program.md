@@ -71,10 +71,11 @@ las primeras ejecuciones una vez existan credenciales (ver §10):
 | Recurso | Límite de partida | Nota |
 | --- | --- | --- |
 | Timeout total del job | 30 minutos | Igual que el timeout de `validate.yml` en `DockerSwarmInfrastrcture`, por coherencia de organización. |
-| Llamadas al modelo/agente por ejecución | 1 ejecución de extracción, con reintentos internos acotados a un máximo razonable definido por quien implemente el paso real | Ajustar cuando exista telemetría real de coste/latencia. |
-| Tokens por ejecución | Presupuesto a fijar por quien active `CLAUDE_CODE_OAUTH_TOKEN`, documentado en ese momento en este mismo fichero | No hay dato real hoy; no se inventa un número. |
-| Ficheros tocados por PR | 20 ficheros como máximo | Si la extracción de un día requiere tocar más, es señal de que debe partirse en varias PRs más pequeñas, no de subir el límite sin más. |
-| PRs abiertas simultáneas hacia `DockerSwarmDocs` | 1 | Si la PR del día anterior sigue sin revisar, el bot no abre una nueva encima; actualiza la existente o espera (ver §6). |
+| Llamadas al modelo/agente por ejecución | 1 invocación de `anthropics/claude-code-action` (`claude-sonnet-5`), sin reintento automático si falla | Configurado en `.github/workflows/daily-memory.yml`, paso `extract`. Solo se invoca si hay commits nuevos que procesar (ver §5). |
+| Turnos agénticos por ejecución | `--max-turns 40` | Límite duro de la CLI (`claude -p`); la ejecución se detiene con error si lo alcanza sin haber terminado. |
+| Gasto en USD por ejecución | `--max-budget-usd 3.00` | Punto de partida sin telemetría real todavía (2026-07-29, ver §10); se ajusta aquí en cuanto haya coste real observado de las primeras ejecuciones. |
+| Ficheros tocados por PR | 20 ficheros como máximo | Si la extracción de un día requiere tocar más, es señal de que debe partirse en varias PRs más pequeñas, no de subir el límite sin más. Aplicado como instrucción explícita al agente, no como límite técnico forzado por el workflow. |
+| PRs abiertas simultáneas hacia `DockerSwarmDocs` | 1 | Aplicado en el paso `existing-pr` de `daily-memory.yml`: si ya hay una PR abierta con la etiqueta `automated-pr`, la ejecución de hoy no abre otra — lo deja registrado en `memoria/logs/` y espera (ver §6). |
 
 Estos números son un punto de partida, no una promesa de rendimiento. Se
 revisan y se ajustan en este fichero, con commit propio, cuando haya datos de
@@ -87,13 +88,33 @@ Definido en
 cron diario disparado por GitHub Actions, más `workflow_dispatch` para
 ejecución manual bajo demanda. El job hace, en orden:
 
-1. Checkout de este repo (`DockerSwarmMemoria`).
+1. Checkout de este repo (`DockerSwarmMemoria`, con permiso de escritura para
+   el paso 9).
 2. Checkout de solo lectura de `apptolast/DockerSwarmInfrastrcture`.
 3. Checkout de `apptolast/DockerSwarmDocs` (destino de la futura PR).
-4. Paso de extracción (**hoy es un placeholder explícito**, ver §10).
-5. Comprobación de si hay cambios reales antes de proponer nada.
-6. Apertura de PR contra `DockerSwarmDocs` únicamente si el paso 5 detectó
+4. Cálculo en bash puro (sin agente) de qué cambió en
+   `DockerSwarmInfrastrcture` desde el último commit procesado
+   (`memoria/estado/`), o instantánea completa si es la primera ejecución.
+   Este mismo paso evalúa también el circuit-breaker de §9 (últimas 3
+   entradas de `memoria/logs/` fallidas por el mismo motivo).
+5. Comprobación de que no haya ya una PR automática abierta sin revisar
+   (máximo 1 simultánea, ver §4) — antes de gastar presupuesto en extraer,
+   no después.
+6. Paso de extracción (**implementado**, ver §10): `anthropics/claude-code-action`,
+   solo si el paso 4 encontró algo que procesar, el paso 5 no encontró una
+   PR ya abierta, y el circuit-breaker no está activo.
+7. Comprobación de si hay cambios reales en `DockerSwarmDocs` antes de
+   proponer nada (siempre `false` si el paso 6 no llegó a ejecutarse).
+8. Apertura de PR contra `DockerSwarmDocs` únicamente si el paso 7 detectó
    cambios reales, nunca en modo auto-merge.
+9. Registro de la ejecución en `memoria/logs/` y avance del checkpoint en
+   `memoria/estado/`, con push directo a la rama por defecto de este mismo
+   repo (nunca a `DockerSwarmDocs` ni a `DockerSwarmInfrastrcture`). Corre
+   siempre, incluso si un paso anterior falló, para dejar constancia (§6). El
+   checkpoint solo avanza si el rango de commits de esta ejecución se
+   procesó de verdad (o si no había nada que procesar) — nunca si el
+   circuit-breaker, la PR-ya-abierta o un fallo de extracción lo impidieron,
+   para no perder ese rango sin procesar.
 
 ## 6. Política de commit / no-commit (revert por defecto)
 
@@ -152,6 +173,11 @@ ejecución manual bajo demanda. El job hace, en orden:
   `used-by`, `related-runbooks`, `related-dashboards`, `related-alerts`,
   `see-also`. Un documento sin ese frontmatter completo no es una propuesta
   válida y no debe llegar a abrir PR.
+- Además del contrato anterior, `DockerSwarmDocs` es un sitio Docusaurus cuyo
+  sidebar se genera automáticamente a partir del campo `sidebar_position` de
+  cada fichero (ver `sidebars.js` de ese repo). No forma parte del contrato
+  de `sistema-central-admin-servidor`, pero también es obligatorio en cada
+  documento propuesto por este bot para que la página aparezca donde debe.
 
 ## 9. Criterio de éxito y de parada
 
@@ -172,14 +198,46 @@ ejecuciones consecutivas terminan en fallo por el mismo motivo técnico
 ejecución debe limitarse a registrar el patrón y no reintentar en bucle; la
 corrección de la causa raíz es responsabilidad humana, no del bot.
 
-## 10. Estado actual (2026-07-28)
+**Implementado** en el paso `scope` de `daily-memory.yml`: compara las 3
+entradas más recientes de `memoria/logs/` y, si las 3 tienen exactamente el
+mismo texto de `Resultado:` empezando por "fallo:", marca
+`circuit_breaker=true` y la ejecución de ese día no llega a extraer. Es una
+pausa de una ejecución, no un apagado permanente: se reevalúa en cada
+ejecución con la ventana de las 3 últimas entradas, así que un fallo real y
+persistente sigue pausando el reintento de forma indefinida, y un único
+`Resultado:` distinto en la ventana (por ejemplo, tras corregir la causa
+raíz) rompe el patrón y permite reintentar de nuevo.
 
-- No existen todavía los secrets `DOCKERSWARM_BOT_PAT` ni
-  `CLAUDE_CODE_OAUTH_TOKEN` en este repo. El workflow diario existe completo
-  pero su paso de extracción es un placeholder explícito que no lee ni
-  escribe nada real (ver `.github/workflows/daily-memory.yml`).
-- No se ha ejecutado nunca una extracción real. No hay `memoria/logs/` con
-  entradas todavía; el directorio existe vacío como destino preparado.
+## 10. Estado actual (2026-07-29)
+
+- El paso de extracción real ya está implementado (ver
+  `.github/workflows/daily-memory.yml`, paso `extract`): invoca
+  `anthropics/claude-code-action` (fijado a un commit concreto, no a un tag
+  móvil) con el presupuesto de §4, sin acceso a shell ni red — el cálculo de
+  qué cambió desde la última ejecución lo hace un paso anterior en bash puro
+  (`scope`), no el agente. El checkpoint incremental
+  (`memoria/estado/ultimo-commit-procesado.txt`) y el log por ejecución
+  (`memoria/logs/YYYY-MM-DD.md`) también están implementados, con push directo
+  del propio bot a la rama por defecto de este mismo repo (mutable por
+  contrato, §3) — nunca a `DockerSwarmDocs` ni a `DockerSwarmInfrastrcture`.
+- La comprobación de "máximo 1 PR abierta simultánea" (§4) corre antes de
+  extraer, no después: si ya hay una PR automática sin revisar, el paso
+  `extract` ni siquiera se invoca ese día (ahorra presupuesto) y el
+  checkpoint no avanza, para no perder ese rango de commits sin procesar. El
+  circuit-breaker de §9 está implementado con la misma lógica de "no
+  avanzar el checkpoint si no se procesó de verdad".
+- Sigue sin existir ninguno de los dos secrets, `DOCKERSWARM_BOT_PAT` ni
+  `CLAUDE_CODE_OAUTH_TOKEN`. Configurarlos sigue siendo una decisión y una
+  acción explícita del propietario del repo (ver README.md, "Secrets
+  pendientes de configurar"); nadie los ha inventado ni cargado con un valor
+  de relleno. Sin ellos, el workflow sigue fallando de forma explícita en los
+  checkouts cruzados y el paso `extract` nunca llega a invocarse con un token
+  real.
+- Consecuencia directa de lo anterior: no se ha ejecutado nunca una
+  extracción real todavía, ni con la implementación de hoy. El presupuesto en
+  USD de §4 (`--max-budget-usd 3.00`) es un punto de partida sin telemetría
+  real que lo respalde — se revisará en cuanto exista una primera ejecución
+  real que lo justifique o lo contradiga.
 - No se ha abierto ninguna PR contra `DockerSwarmDocs` todavía.
 - `engram` (el patrón de "memoria viva" con `mem_search`/`mem_save` de
   `apptolast/kmp-sdd-harness`) no está instalado en esta máquina ni se usa

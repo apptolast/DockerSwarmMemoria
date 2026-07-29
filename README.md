@@ -50,8 +50,8 @@ usa este bot para estructurar lo que extrae está en
 | --- | --- |
 | [`program.md`](program.md) | El contrato de comportamiento del bot: objetivo, ficheros mutables/protegidos, presupuesto, política de commit/revert, escalado a humano, criterio de éxito/parada. |
 | [`schema/graph-vocabulary.md`](schema/graph-vocabulary.md) | El vocabulario de nodos (`Entity`, `Claim`, `Source`, `Artifact`, `AgentRun`, `Evaluation`, `Task`, `Commit`, `Metric`) y aristas (`MENTIONS`, `SUPPORTS`, `CONTRADICTS`, `DERIVED_FROM`, `PRODUCED`, `EVALUATES`, `REVISES`, `SUPERSEDES`, `DEPENDS_ON`, `PARENT_OF`, `RESOLVED_TO`) que usa este bot para estructurar lo que extrae. |
-| [`.github/workflows/daily-memory.yml`](.github/workflows/daily-memory.yml) | El workflow diario: checkout de fuentes, paso de extracción (hoy placeholder) y apertura de PR contra `DockerSwarmDocs`. |
-| `memoria/` | Estado mutable propio del bot: logs de ejecución y, en el futuro, estado de extracción incremental. Vacío hoy porque no ha corrido ninguna extracción real todavía. |
+| [`.github/workflows/daily-memory.yml`](.github/workflows/daily-memory.yml) | El workflow diario: checkout de fuentes, cálculo del alcance (bash), paso de extracción real (`anthropics/claude-code-action`), apertura de PR contra `DockerSwarmDocs`, y registro/checkpoint. Implementado; sin ejecutar todavía por los secrets pendientes (ver abajo). |
+| `memoria/` | Estado mutable propio del bot: `logs/` (un fichero por ejecución) y `estado/` (checkpoint incremental, el último commit de `DockerSwarmInfrastrcture` ya procesado). Vacío de contenido real hoy porque no ha corrido ninguna extracción real todavía. |
 
 ## Secrets pendientes de configurar
 
@@ -64,15 +64,15 @@ Secrets and variables → Actions), no de este bot.
 | Secret | Para qué hace falta | Por qué falta |
 | --- | --- | --- |
 | `DOCKERSWARM_BOT_PAT` | Checkout de solo lectura de `apptolast/DockerSwarmInfrastrcture` (repo privado) y apertura de PR (con permiso de contenidos/PR) contra `apptolast/DockerSwarmDocs` (repo privado). | Es un token propio del bot (fine-grained PAT recomendado, con permisos mínimos: lectura sobre `DockerSwarmInfrastrcture`, lectura/escritura de contenidos y pull requests sobre `DockerSwarmDocs`). No existe todavía porque crearlo implica una decisión de alcance/rotación que corresponde al propietario de la organización. |
-| `CLAUDE_CODE_OAUTH_TOKEN` | El paso de extracción real (hoy un placeholder marcado `TODO(humano)` en el workflow) invocaría al agente con este token para leer `DockerSwarmInfrastrcture` y redactar los documentos candidatos. | No se ha configurado todavía porque la extracción real no está implementada; hasta que exista, este secret no tiene ningún consumidor real y no debe crearse "por si acaso" con un valor de relleno. |
+| `CLAUDE_CODE_OAUTH_TOKEN` | El paso de extracción real (`anthropics/claude-code-action`, ya implementado en el workflow) invoca al agente con este token para leer `DockerSwarmInfrastrcture` y redactar los documentos candidatos. | No se ha configurado todavía. La implementación existe y está lista para consumirlo, pero hasta que el secret exista de verdad no se crea "por si acaso" con un valor de relleno. |
 
 Sin estos dos secrets, el workflow diario se ejecutará igualmente (el cron
 sigue disparándose) pero fallará en los pasos de checkout de
 `DockerSwarmInfrastrcture`/`DockerSwarmDocs`: ese es el comportamiento
-esperado, no un error de este repo. El paso de extracción seguirá siendo un
-placeholder explícito hasta que alguien lo sustituya por la implementación
-real (ver el comentario `TODO(humano)` en
-[`daily-memory.yml`](.github/workflows/daily-memory.yml)).
+esperado, no un error de este repo. El paso de extracción, aunque ya está
+implementado, no se ha ejecutado nunca de verdad hasta que exista
+`CLAUDE_CODE_OAUTH_TOKEN` — ver el estado detallado en
+[`program.md`](program.md), §10.
 
 ## Principio de "siempre fusionado por un humano"
 
