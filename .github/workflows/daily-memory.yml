@@ -218,11 +218,17 @@ jobs:
             - `dockerswarm-infra/` — checkout de solo lectura de
               `apptolast/DockerSwarmInfrastrcture`. NUNCA escribas aquí (y no
               podrías: tu permiso de escritura solo cubre `dockerswarm-docs/`).
-            - `dockerswarm-docs/` — checkout de `apptolast/DockerSwarmDocs`,
-              destino de tus propuestas y único árbol donde puedes escribir o
-              editar. Los documentos existentes están en
-              `dockerswarm-docs/docs/*.md`; el sidebar se genera solo a
-              partir del `sidebar_position` de cada fichero.
+            - `dockerswarm-docs/` — checkout de `apptolast/DockerSwarmDocs`
+              (Starlight/Astro, no Docusaurus), destino de tus propuestas.
+              Los documentos existentes están en
+              `dockerswarm-docs/src/content/docs/*.md`. Aunque tu permiso
+              técnico de escritura cubre todo `dockerswarm-docs/**`, tu árbol
+              de trabajo real son los ficheros `.md` de
+              `src/content/docs/`: NUNCA edites
+              `dockerswarm-docs/astro.config.mjs` (ahí vive el sidebar, ver
+              el punto 8 más abajo) ni ningún otro fichero de configuración
+              del sitio (`package.json`, `.github/workflows/*`, etc.) — eso
+              es competencia exclusiva de un humano.
             - `scratch/changed-files.txt` — lo que cambió en
               `dockerswarm-infra/` desde la última ejecución procesada
               (`git diff --name-status`), ya calculado por el workflow.
@@ -246,8 +252,8 @@ jobs:
                afirmaciones (`Claim`) verificables sobre entidades concretas
                (servicios, hosts, redes, stacks, secrets, políticas).
             3. Antes de escribir un documento nuevo, mira si
-               `dockerswarm-docs/docs/` ya tiene un documento relacionado
-               (`Read`/`Glob`/`Grep` ahí). Si lo hay y tu hallazgo lo
+               `dockerswarm-docs/src/content/docs/` ya tiene un documento
+               relacionado (`Read`/`Glob`/`Grep` ahí). Si lo hay y tu hallazgo lo
                actualiza, edítalo (o añade una sección fechada nueva, como
                ya hace `estado-observado.md` con instantáneas fechadas) en
                vez de duplicar contenido. Si tu hallazgo reemplaza por
@@ -256,20 +262,25 @@ jobs:
                documento (nunca la borres sin más — ver graph-vocabulary.md,
                invariante 4).
             4. Cada documento que escribas o edites en
-               `dockerswarm-docs/docs/**.md` lleva el frontmatter YAML
-               COMPLETO exigido por `program.md` §8: `title`, `type`
+               `dockerswarm-docs/src/content/docs/**.md` lleva el
+               frontmatter YAML COMPLETO exigido por `program.md` §8:
+               `title`, `type`
                (uno de `service|runbook|infrastructure|adr|host|network|policy|architecture`),
                `owner: PabloHurtadoGonzalo86`, `source-of-truth` (path exacto
                dentro de `DockerSwarmInfrastrcture` + commit corto),
                `last-verified` (fecha de hoy, `YYYY-MM-DD`), `tags`,
                `status`, `superseded-by`, `depends-on`, `used-by`,
                `related-runbooks`, `related-dashboards`, `related-alerts`,
-               `see-also`, y `sidebar_position` (mira los ficheros existentes
-               con Glob/Read y usa el siguiente entero libre — este último
-               campo es específico de Docusaurus, no del contrato de
-               `sistema-central-admin-servidor`, pero también es obligatorio
-               aquí). Un documento sin frontmatter completo NO es una
-               propuesta válida — no lo escribas a medias.
+               `see-also`, y `sidebar: { order: N }` (mira los ficheros
+               existentes con Glob/Read y usa el siguiente entero libre —
+               heredero directo del antiguo `sidebar_position` de
+               Docusaurus; en Starlight es un campo válido del esquema pero
+               YA NO determina el orden real del sidebar ni si la página
+               aparece en él — eso solo lo hace `astro.config.mjs`, que no
+               puedes tocar, ver el punto 8 más abajo — se rellena de todas
+               formas por coherencia con el resto de páginas). Un documento
+               sin frontmatter completo NO es una propuesta válida — no lo
+               escribas a medias.
             5. Cualquier afirmación que no puedas trazar a un path+commit
                concreto de `dockerswarm-infra/` se marca explícitamente
                `TODO: verificar` en el cuerpo del documento. Nunca la
@@ -287,10 +298,23 @@ jobs:
                ningún fichero en `dockerswarm-docs/`. No forzar una propuesta
                es un resultado válido y esperado (program.md §6 y §9) — no
                es un fallo.
+            8. Si alguno de los documentos que escribiste en este paso es una
+               página **nueva** (no una edición de una página ya existente),
+               no la puedes hacer aparecer tú mismo en el sidebar: eso
+               requiere una entrada añadida a mano al array `sidebar` de
+               `dockerswarm-docs/astro.config.mjs`, fichero que no debes
+               tocar (ver arriba y `program.md` §3 y §7). Señala esto
+               explícitamente en el resumen final de tu respuesta —
+               qué página(s) nueva(s) creaste y que necesitan esa entrada de
+               sidebar añadida a mano — igual que señalarías un
+               `TODO: verificar`, para que quede constancia para quien revise
+               la PR.
 
             Termina tu respuesta con un resumen breve en texto plano (no un
-            fichero) de: cuántos documentos creaste, cuántos editaste, y si
-            dejaste algo fuera por presupuesto o por falta de fuente
+            fichero) de: cuántos documentos creaste, cuántos editaste, si
+            alguna página nueva necesita una entrada de sidebar añadida a
+            mano en `astro.config.mjs` (punto 8), y si dejaste algo fuera
+            por presupuesto o por falta de fuente
             verificable.
 
       # Verificación de que la propuesta compila antes de abrir PR con ella.

@@ -53,6 +53,16 @@ extracción real (ver §10, "Estado actual").
 - `apptolast/DockerSwarmInfrastrcture` completo: es de **solo lectura** para
   este bot, siempre. Ninguna ejecución del bot hace commit, push, PR ni
   ningún otro cambio ahí, bajo ninguna circunstancia.
+- `astro.config.mjs` de `apptolast/DockerSwarmDocs` (el array `sidebar`
+  explícito por `slug`, ver §8): aunque el permiso técnico de escritura del
+  paso `extract` (`Write(dockerswarm-docs/**)`) no lo bloquea a nivel de
+  herramienta, por contrato este bot no lo edita nunca. Es un fichero de
+  configuración de navegación mantenido a mano, no un documento de
+  contenido. Consecuencia directa: si una ejecución crea una página **nueva**
+  en `src/content/docs/`, esa página no aparecerá en el sidebar hasta que un
+  humano le añada su entrada `slug` en `astro.config.mjs` — el bot debe
+  señalarlo explícitamente (ver §7) en vez de intentar resolverlo editando
+  ese fichero.
 - La rama por defecto (`main`) de `apptolast/DockerSwarmDocs`: el bot nunca
   hace push directo. Solo abre PRs contra ella, y esas PRs solo las fusiona
   un humano.
@@ -152,6 +162,14 @@ ejecución manual bajo demanda. El job hace, en orden:
 - Cualquier cambio a este mismo `program.md` (objetivo, presupuesto, ficheros
   protegidos) es responsabilidad de quien mantiene el repo, no algo que el
   bot module en tiempo de ejecución.
+- Si una ejecución crea una página **nueva** en `src/content/docs/` (no una
+  edición de una página ya existente), el bot no puede por sí mismo hacerla
+  visible en el sidebar de `DockerSwarmDocs`: eso vive en el array `sidebar`
+  de `astro.config.mjs`, fichero protegido (§3). El bot debe dejar constancia
+  explícita de esta pendiente — "página nueva creada, falta entrada de
+  sidebar" — en el resumen final de la ejecución, para que quede escrito en
+  el log de §8 y sea visible para quien revise la PR, y nunca debe intentar
+  editar `astro.config.mjs` para resolverlo por su cuenta.
 
 ## 8. Logging y trazabilidad
 
@@ -173,11 +191,23 @@ ejecución manual bajo demanda. El job hace, en orden:
   `used-by`, `related-runbooks`, `related-dashboards`, `related-alerts`,
   `see-also`. Un documento sin ese frontmatter completo no es una propuesta
   válida y no debe llegar a abrir PR.
-- Además del contrato anterior, `DockerSwarmDocs` es un sitio Docusaurus cuyo
-  sidebar se genera automáticamente a partir del campo `sidebar_position` de
-  cada fichero (ver `sidebars.js` de ese repo). No forma parte del contrato
-  de `sistema-central-admin-servidor`, pero también es obligatorio en cada
-  documento propuesto por este bot para que la página aparezca donde debe.
+- `DockerSwarmDocs` es ahora un sitio Starlight (Astro), no Docusaurus. Los
+  documentos viven en `src/content/docs/*.md` (antes `docs/*.md`), y su
+  frontmatter lo valida el esquema Zod de `src/content.config.ts` (extensión
+  de `docsSchema` de `@astrojs/starlight/schema`) — ese esquema declara
+  opcionales, a nivel de Zod, los mismos 13 campos que exige el párrafo
+  anterior; siguen siendo obligatorios por contrato de este bot aunque el
+  esquema los acepte vacíos.
+- El sidebar ya **no** se genera automáticamente a partir de un campo de
+  frontmatter: en Starlight 0.41.5, `{ autogenerate: ... }` no puebla el
+  sidebar (comprobado vacío), así que `astro.config.mjs` declara en su lugar
+  un array explícito de entradas por `slug`, en el orden manual en que deben
+  mostrarse. Cada página sigue llevando `sidebar: { order: N }` en su
+  frontmatter (heredero directo del antiguo `sidebar_position` de
+  Docusaurus) como metadato correcto y coherente con el resto de páginas,
+  pero ese campo **ya no determina** el orden ni si la página aparece en el
+  sidebar — solo lo hace el array de `astro.config.mjs`, que es de
+  solo-humano (ver §3, "Protegidos", y §7).
 
 ## 9. Criterio de éxito y de parada
 
