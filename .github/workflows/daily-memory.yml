@@ -10,6 +10,12 @@ name: Daily memory extraction
 
 permissions:
   contents: write
+  # Requerido por anthropics/claude-code-action incluso autenticando con
+  # claude_code_oauth_token (no solo con Workload Identity Federation): sin
+  # esto el paso `extract` falla con "Could not fetch an OIDC token" antes
+  # de llegar a leer el prompt. Verificado con una ejecución real fallida
+  # (run 30502360813) y con la documentación oficial del action.
+  id-token: write
 
 concurrency:
   group: daily-memory-${{ github.workflow }}
