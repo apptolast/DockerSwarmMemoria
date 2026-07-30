@@ -369,7 +369,7 @@ jobs:
       # medio escribir por un fallo previo).
       - name: Set up Node.js for the build-verification step
         if: steps.scope.outputs.has_work == 'true' && steps.scope.outputs.circuit_breaker == 'false' && steps.existing-pr.outputs.already_open == 'false' && steps.extract.outcome == 'success'
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7
         with:
           node-version: "22"
           cache: npm
