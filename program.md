@@ -208,7 +208,7 @@ persistente sigue pausando el reintento de forma indefinida, y un único
 `Resultado:` distinto en la ventana (por ejemplo, tras corregir la causa
 raíz) rompe el patrón y permite reintentar de nuevo.
 
-## 10. Estado actual (2026-07-29)
+## 10. Estado actual (2026-07-30)
 
 - El paso de extracción real ya está implementado (ver
   `.github/workflows/daily-memory.yml`, paso `extract`): invoca
@@ -226,19 +226,39 @@ raíz) rompe el patrón y permite reintentar de nuevo.
   checkpoint no avanza, para no perder ese rango de commits sin procesar. El
   circuit-breaker de §9 está implementado con la misma lógica de "no
   avanzar el checkpoint si no se procesó de verdad".
-- Sigue sin existir ninguno de los dos secrets, `DOCKERSWARM_BOT_PAT` ni
-  `CLAUDE_CODE_OAUTH_TOKEN`. Configurarlos sigue siendo una decisión y una
-  acción explícita del propietario del repo (ver README.md, "Secrets
-  pendientes de configurar"); nadie los ha inventado ni cargado con un valor
-  de relleno. Sin ellos, el workflow sigue fallando de forma explícita en los
-  checkouts cruzados y el paso `extract` nunca llega a invocarse con un token
-  real.
-- Consecuencia directa de lo anterior: no se ha ejecutado nunca una
-  extracción real todavía, ni con la implementación de hoy. El presupuesto en
-  USD de §4 (`--max-budget-usd 3.00`) es un punto de partida sin telemetría
-  real que lo respalde — se revisará en cuanto exista una primera ejecución
-  real que lo justifique o lo contradiga.
-- No se ha abierto ninguna PR contra `DockerSwarmDocs` todavía.
+- Los dos secrets, `DOCKERSWARM_BOT_PAT` y `CLAUDE_CODE_OAUTH_TOKEN`, están
+  configurados como repository secrets de este repo desde el 2026-07-30
+  (confirmado con `gh secret list --repo apptolast/DockerSwarmMemoria`; no se
+  registra aquí ni en ningún otro sitio el valor de ninguno de los dos, solo
+  el nombre — ver §7). Configurarlos fue, como preveía la versión anterior de
+  este párrafo, una decisión y una acción explícita del propietario del
+  repo; nadie los ha inventado ni cargado con un valor de relleno.
+- Consecuencia directa de lo anterior: con los secrets ya configurados, se
+  ejecutó la primera extracción real el 2026-07-30 (`workflow_dispatch`,
+  run `30502844870`, 00:29:51Z–00:35:16Z — TODO: verificar si esa hora UTC
+  corresponde también a la hora local relevante para el propietario antes de
+  citarla en otro sitio). Terminó con éxito y abrió la primera PR real de
+  este bot contra `DockerSwarmDocs`:
+  [`apptolast/DockerSwarmDocs#1`](https://github.com/apptolast/DockerSwarmDocs/pull/1),
+  abierta 2026-07-30T00:35:09Z. El presupuesto en USD de §4
+  (`--max-budget-usd 3.00`) sigue siendo un punto de partida sin coste real
+  todavía incorporado a este fichero — TODO: verificar el gasto real de esa
+  ejecución (facturación de Anthropic) antes de decidir si el valor se
+  mantiene o se ajusta.
+- Esa misma primera ejecución real destapó un hueco en el propio pipeline,
+  no en el contenido extraído: la PR #1 se abrió con un error de compilación
+  MDX (comentarios HTML literales `<!-- -->`, sintaxis inválida en el
+  pipeline MDX de Docusaurus) que dejó el check "Build" de esa PR en rojo
+  desde su creación, porque `daily-memory.yml` solo comprobaba si
+  `dockerswarm-docs/` había cambiado (paso `diff`), nunca si el resultado
+  compilaba. Ese hueco se cerró añadiendo un paso `verify-build` al
+  workflow (`npm ci` + `npm run build` dentro de `dockerswarm-docs/`, mismo
+  gate que `extract` más `steps.extract.outcome == 'success'`): si el build
+  falla, el workflow ya no abre PR y el checkpoint no avanza, igual que ante
+  un fallo de extracción (ver `.github/workflows/daily-memory.yml`, pasos
+  `verify-build` y `Open pull request`). El contenido concreto de la PR #1
+  se corrigió aparte, a mano, directamente en esa PR — eso no forma parte de
+  este cambio de pipeline.
 - `engram` (el patrón de "memoria viva" con `mem_search`/`mem_save` de
   `apptolast/kmp-sdd-harness`) no está instalado en esta máquina ni se usa
   hoy. El diseño de este repo (separación clara entre lo que se extrae, su

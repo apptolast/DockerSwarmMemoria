@@ -293,12 +293,78 @@ jobs:
             dejaste algo fuera por presupuesto o por falta de fuente
             verificable.
 
+      # Verificación de que la propuesta compila antes de abrir PR con ella.
+      #
+      # Motivación (hueco confirmado): la primera ejecución real de este bot
+      # con secrets configurados (run 30502844870, workflow_dispatch,
+      # 2026-07-30T00:29:51Z–00:35:16Z) abrió `apptolast/DockerSwarmDocs#1`
+      # con un error de compilación MDX (comentarios HTML literales
+      # `<!-- -->`, sintaxis inválida en el pipeline MDX de Docusaurus —
+      # los comentarios en MDX se escriben como `{/* ... */}`, ver
+      # https://docusaurus.io/docs/markdown-features#mdx-comments) que dejó
+      # el check "Build" de esa PR en rojo desde su creación. Hasta este
+      # paso, el workflow solo comprobaba si `dockerswarm-docs/` había
+      # cambiado (paso `diff`, más abajo) — nunca si el resultado era
+      # sintácticamente válido. Este paso cierra ese hueco compilando el
+      # sitio con el mismo comando que usa `apptolast/DockerSwarmDocs` en su
+      # propio `.github/workflows/build.yml` (`npm ci` + `npm run build`),
+      # para que un fallo de compilación se detecte aquí, antes de gastar
+      # una PR, y no se descubra después en el check de una PR ya abierta.
+      #
+      # Node 20 porque es lo que exige `dockerswarm-docs/package.json`
+      # (`engines.node: >=20.0`) y lo que usa `DockerSwarmDocs` en su propio
+      # workflow de build — mismo valor, por coherencia dentro de la
+      # organización. `cache-dependency-path` apunta explícitamente al
+      # lockfile dentro de `dockerswarm-docs/` porque el checkout de este
+      # job vive en un workspace con varios repos hermanos (`memoria-bot/`,
+      # `dockerswarm-infra/`, `dockerswarm-docs/`); sin esa ruta explícita,
+      # `actions/setup-node` busca el lockfile en la raíz del workspace y no
+      # lo encuentra, y el `cache: npm` de abajo no tendría efecto (ver
+      # https://github.com/actions/setup-node#caching-packages-dependencies).
+      #
+      # Mismo gate que el paso `extract` (había trabajo, no circuit-breaker,
+      # no había ya una PR abierta) más la condición extra de que `extract`
+      # haya terminado con éxito: si `extract` no llegó a ejecutarse o
+      # falló, no tiene sentido gastar tiempo de CI compilando un
+      # `dockerswarm-docs/` que sigue igual que se clonó (o que quedó a
+      # medio escribir por un fallo previo).
+      - name: Set up Node.js for the build-verification step
+        if: steps.scope.outputs.has_work == 'true' && steps.scope.outputs.circuit_breaker == 'false' && steps.existing-pr.outputs.already_open == 'false' && steps.extract.outcome == 'success'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: dockerswarm-docs/package-lock.json
+
+      # `npm ci` (no `npm install`) para instalar exactamente lo que fija
+      # `package-lock.json`, igual que hace `DockerSwarmDocs` en su propio
+      # `build.yml`. `npm run build` invoca `docusaurus build`, que termina
+      # con código de salida distinto de cero si el contenido MDX no
+      # compila — exactamente el fallo que se coló en la PR #1 y que este
+      # paso existe para atrapar antes de proponer nada. Si este paso
+      # falla, el workflow no debe avanzar a abrir PR (ver el `if:` del
+      # paso "Open pull request" más abajo) y el paso final debe registrar
+      # un resultado distinguible, sin avanzar el checkpoint (ver "Record
+      # run log and advance checkpoint").
+      - name: Verify dockerswarm-docs builds after extraction
+        id: verify-build
+        if: steps.scope.outputs.has_work == 'true' && steps.scope.outputs.circuit_breaker == 'false' && steps.existing-pr.outputs.already_open == 'false' && steps.extract.outcome == 'success'
+        working-directory: dockerswarm-docs
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+
       # Deja constancia de qué tocó realmente el paso anterior (o "nada"),
       # calculado desde git, no desde lo que el agente diga que hizo — para
       # que el log de program.md §8 sea verificable y no autoreportado. Corre
       # siempre: si `extract` no se ejecutó (sin trabajo, PR ya abierta, o
       # circuit-breaker), este paso reporta correctamente "sin cambios",
-      # porque dockerswarm-docs/ sigue exactamente como se clonó.
+      # porque dockerswarm-docs/ sigue exactamente como se clonó. También
+      # corre si `extract` tuvo éxito pero `verify-build` falló (el build
+      # roto es motivo para no abrir PR, pero no impide que este paso
+      # calcule y deje registrado qué había cambiado — el paso "Open pull
+      # request" es el que efectivamente bloquea la apertura en ese caso).
       - name: Check for real changes
         id: diff
         working-directory: dockerswarm-docs
@@ -313,15 +379,20 @@ jobs:
             git diff --cached --name-status > ../scratch/docs-touched.txt
           fi
 
-      # Abre PR contra DockerSwarmDocs solo si hubo cambios reales. No hace
+      # Abre PR contra DockerSwarmDocs solo si hubo cambios reales Y el
+      # nuevo paso `verify-build` (más arriba) terminó con éxito. No hace
       # falta volver a comprobar "PR ya abierta" aquí: si lo estaba, el paso
       # `extract` ni siquiera se ejecutó, así que `changed` ya es false por
-      # construcción. NUNCA auto-merge: siempre requiere revisión y merge
-      # humano explícito (ver program.md, §6 y §7). El "draft: true" es una
-      # barrera adicional intencional, no solo informativa.
+      # construcción. La condición `steps.verify-build.outcome == 'success'`
+      # es la barrera que corrige el hueco de PR #1 (ver comentario de
+      # `verify-build` arriba): si el sitio no compiló tras la extracción,
+      # este paso ni se intenta, por muchos cambios reales que hubiera.
+      # NUNCA auto-merge: siempre requiere revisión y merge humano explícito
+      # (ver program.md, §6 y §7). El "draft: true" es una barrera adicional
+      # intencional, no solo informativa.
       - name: Open pull request against DockerSwarmDocs (never auto-merge)
         id: open-pr
-        if: steps.diff.outputs.changed == 'true'
+        if: steps.diff.outputs.changed == 'true' && steps.verify-build.outcome == 'success'
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1  # v8
         with:
           token: ${{ secrets.DOCKERSWARM_BOT_PAT }}
@@ -347,9 +418,10 @@ jobs:
       # si un paso anterior falló, para que el fallo quede escrito y no se
       # pierda. El checkpoint (último commit procesado) solo avanza cuando
       # hubo un intento real y completo esta ejecución: si el circuit-breaker
-      # o la PR-ya-abierta impidieron extraer, o si la extracción falló, el
-      # rango de commits sigue sin procesar y debe reintentarse la próxima
-      # vez — no se descarta en silencio.
+      # o la PR-ya-abierta impidieron extraer, si la extracción falló, o si
+      # el build de verificación de dockerswarm-docs (`verify-build`) falló
+      # tras una extracción exitosa, el rango de commits sigue sin procesar y
+      # debe reintentarse la próxima vez — no se descarta en silencio.
       - name: Record run log and advance checkpoint
         if: always()
         working-directory: memoria-bot
@@ -360,6 +432,7 @@ jobs:
           CIRCUIT_BREAKER: ${{ steps.scope.outputs.circuit_breaker }}
           PR_ALREADY_OPEN: ${{ steps.existing-pr.outputs.already_open }}
           EXTRACT_OUTCOME: ${{ steps.extract.outcome }}
+          BUILD_OUTCOME: ${{ steps.verify-build.outcome }}
           DIFF_CHANGED: ${{ steps.diff.outcome == 'success' && steps.diff.outputs.changed || 'unknown' }}
           PR_OUTCOME: ${{ steps.open-pr.outcome }}
         run: |
@@ -398,6 +471,8 @@ jobs:
             RESULTADO="cambios pendientes de procesar, pero ya había una PR automática sin revisar: no se extrajo hoy"
           elif [ "$EXTRACT_OUTCOME" != "success" ]; then
             RESULTADO="fallo: el paso de extracción no terminó con éxito (outcome=$EXTRACT_OUTCOME)"
+          elif [ "$BUILD_OUTCOME" != "success" ]; then
+            RESULTADO="fallo: build de dockerswarm-docs no compiló tras la extracción (outcome=$BUILD_OUTCOME)"
           elif [ "$DIFF_CHANGED" = "false" ]; then
             RESULTADO="sin cambios (extracción ejecutada, ninguna propuesta con confianza suficiente)"
           elif [ "$PR_OUTCOME" = "success" ]; then
@@ -421,10 +496,13 @@ jobs:
 
           # El checkpoint solo avanza si esta ejecución llegó a procesar de
           # verdad el rango [prev_sha, curr_sha] (o si no había nada que
-          # procesar). Si el circuit-breaker, la PR-ya-abierta o un fallo de
-          # extracción impidieron completarlo, curr_sha NO se guarda, para
-          # que la próxima ejecución vuelva a intentar ese mismo rango.
-          if [ "$HAS_WORK" != "true" ] || { [ "$CIRCUIT_BREAKER" != "true" ] && [ "$PR_ALREADY_OPEN" != "true" ] && [ "$EXTRACT_OUTCOME" = "success" ]; }; then
+          # procesar). Si el circuit-breaker, la PR-ya-abierta, un fallo de
+          # extracción, o un fallo de build de dockerswarm-docs (verify-build,
+          # el hueco que surgió con la PR #1) impidieron completarlo, curr_sha
+          # NO se guarda, para que la próxima ejecución vuelva a intentar ese
+          # mismo rango — un build roto significa que este rango de commits no
+          # se procesó de verdad, igual que un fallo de extracción.
+          if [ "$HAS_WORK" != "true" ] || { [ "$CIRCUIT_BREAKER" != "true" ] && [ "$PR_ALREADY_OPEN" != "true" ] && [ "$EXTRACT_OUTCOME" = "success" ] && [ "$BUILD_OUTCOME" = "success" ]; }; then
             echo "$CURR_SHA" > memoria/estado/ultimo-commit-procesado.txt
           fi
 
