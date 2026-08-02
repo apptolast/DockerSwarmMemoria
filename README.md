@@ -7,11 +7,20 @@ en documentos con frontmatter citable, y propone esos documentos como PR
 contra [`apptolast/DockerSwarmDocs`](https://github.com/apptolast/DockerSwarmDocs)
 — siempre fusionada por un humano, nunca en modo automático.
 
-Este repo hoy contiene el andamiaje (contrato de comportamiento, esquema de
-conocimiento y workflow); todavía no ha ejecutado ninguna extracción real
-porque faltan dos secrets (ver más abajo). Nada de lo que produce este bot se
-publica, despliega ni expone en ningún sitio: eso queda fuera de su alcance
-por diseño (ver [`program.md`](program.md), §2 y §3).
+Este repo está operativo. Los dos secrets están configurados desde el
+2026-07-30 y el bot ya ha corrido de verdad: 9 ejecuciones (3 fallos
+iniciales el 29 y 30 de julio, 6 con éxito desde entonces) y **dos PRs
+propuestas y fusionadas por un humano** en `DockerSwarmDocs` (#1 y #4, ambas
+el 2026-07-30). Nada de lo que produce este bot se publica, despliega ni
+expone en ningún sitio: eso queda fuera de su alcance por diseño (ver
+[`program.md`](program.md), §2 y §3).
+
+Desde el 2026-07-30 el bot informa «sin cambios» en cada ejecución. **Eso es
+comportamiento correcto, no una avería**: la rama `main` de
+`DockerSwarmInfrastrcture` no se ha movido desde ese día, y el checkpoint
+incremental de `memoria/estado/ultimo-commit-procesado.txt` apunta
+exactamente a su HEAD. El bot volverá a producir en cuanto haya commits
+nuevos que destilar.
 
 ## Cómo se relaciona con los otros repos
 
@@ -50,29 +59,26 @@ usa este bot para estructurar lo que extrae está en
 | --- | --- |
 | [`program.md`](program.md) | El contrato de comportamiento del bot: objetivo, ficheros mutables/protegidos, presupuesto, política de commit/revert, escalado a humano, criterio de éxito/parada. |
 | [`schema/graph-vocabulary.md`](schema/graph-vocabulary.md) | El vocabulario de nodos (`Entity`, `Claim`, `Source`, `Artifact`, `AgentRun`, `Evaluation`, `Task`, `Commit`, `Metric`) y aristas (`MENTIONS`, `SUPPORTS`, `CONTRADICTS`, `DERIVED_FROM`, `PRODUCED`, `EVALUATES`, `REVISES`, `SUPERSEDES`, `DEPENDS_ON`, `PARENT_OF`, `RESOLVED_TO`) que usa este bot para estructurar lo que extrae. |
-| [`.github/workflows/daily-memory.yml`](.github/workflows/daily-memory.yml) | El workflow diario: checkout de fuentes, cálculo del alcance (bash), paso de extracción real (`anthropics/claude-code-action`), apertura de PR contra `DockerSwarmDocs`, y registro/checkpoint. Implementado; sin ejecutar todavía por los secrets pendientes (ver abajo). |
-| `memoria/` | Estado mutable propio del bot: `logs/` (un fichero por ejecución) y `estado/` (checkpoint incremental, el último commit de `DockerSwarmInfrastrcture` ya procesado). Vacío de contenido real hoy porque no ha corrido ninguna extracción real todavía. |
+| [`.github/workflows/daily-memory.yml`](.github/workflows/daily-memory.yml) | El workflow diario: checkout de fuentes, cálculo del alcance (bash), paso de extracción real (`anthropics/claude-code-action`), apertura de PR contra `DockerSwarmDocs`, y registro/checkpoint. Implementado y en ejecución diaria desde el 2026-07-30. |
+| `memoria/` | Estado mutable propio del bot: `logs/` (un fichero por ejecución) y `estado/` (checkpoint incremental, el último commit de `DockerSwarmInfrastrcture` ya procesado). Con contenido real: hay un log por cada ejecución desde el 2026-07-30 y el checkpoint apunta al HEAD ya procesado. |
 
-## Secrets pendientes de configurar
+## Secrets configurados
 
-Ninguno de estos dos secrets existe todavía en este repo. **No se ha
-inventado ni hardcodeado ningún valor**; el workflow los referencia mediante
-`${{ secrets.* }}` y fallará de forma explícita hasta que existan. Configurar
-ambos es una decisión y una acción del propietario del repo (Settings →
-Secrets and variables → Actions), no de este bot.
+Los dos secrets que necesita el workflow **existen desde el 2026-07-30**
+(comprobable con `gh secret list --repo apptolast/DockerSwarmMemoria`, que
+lista nombre y fecha pero nunca el valor). Aqui no se registra, ni se ha
+registrado nunca, el valor de ninguno de los dos.
 
-| Secret | Para qué hace falta | Por qué falta |
-| --- | --- | --- |
-| `DOCKERSWARM_BOT_PAT` | Checkout de solo lectura de `apptolast/DockerSwarmInfrastrcture` (repo privado) y apertura de PR (con permiso de contenidos/PR) contra `apptolast/DockerSwarmDocs` (repo privado). | Es un token propio del bot (fine-grained PAT recomendado, con permisos mínimos: lectura sobre `DockerSwarmInfrastrcture`, lectura/escritura de contenidos y pull requests sobre `DockerSwarmDocs`). No existe todavía porque crearlo implica una decisión de alcance/rotación que corresponde al propietario de la organización. |
-| `CLAUDE_CODE_OAUTH_TOKEN` | El paso de extracción real (`anthropics/claude-code-action`, ya implementado en el workflow) invoca al agente con este token para leer `DockerSwarmInfrastrcture` y redactar los documentos candidatos. | No se ha configurado todavía. La implementación existe y está lista para consumirlo, pero hasta que el secret exista de verdad no se crea "por si acaso" con un valor de relleno. |
+| Secret | Para que hace falta |
+| --- | --- |
+| `DOCKERSWARM_BOT_PAT` | Checkout de solo lectura de `apptolast/DockerSwarmInfrastrcture` y apertura de PR (contenidos + pull requests) contra `apptolast/DockerSwarmDocs`. Es un PAT fine-grained propio del bot, con permisos minimos y **sin** el permiso `Workflows`, que es lo que impide que pueda tocar `.github/workflows/` del repo destino. |
+| `CLAUDE_CODE_OAUTH_TOKEN` | El paso de extraccion (`anthropics/claude-code-action`) invoca al agente con este token para leer `DockerSwarmInfrastrcture` y redactar los documentos candidatos. |
 
-Sin estos dos secrets, el workflow diario se ejecutará igualmente (el cron
-sigue disparándose) pero fallará en los pasos de checkout de
-`DockerSwarmInfrastrcture`/`DockerSwarmDocs`: ese es el comportamiento
-esperado, no un error de este repo. El paso de extracción, aunque ya está
-implementado, no se ha ejecutado nunca de verdad hasta que exista
-`CLAUDE_CODE_OAUTH_TOKEN` — ver el estado detallado en
-[`program.md`](program.md), §10.
+Hay ademas una dependencia que no es un secret y conviene no perder de vista:
+la **GitHub App de Claude Code** tiene que seguir instalada en esta
+organizacion. Si se desinstala, el paso de extraccion falla con
+"Claude Code is not installed on this repository" y ningun secret arregla
+eso.
 
 ## Principio de "siempre fusionado por un humano"
 
