@@ -1,0 +1,9 @@
+# Memoria organizacional (caché local de patrones de Cénit Digital; se
+# regenera en cada sesión con scripts/sync-memoria.sh o .ps1). Ver
+# docs/adopcion-templatessd.md y docs/memoria-organizacional.md del arnés
+# TemplateSSDUncleBob (no vendorizado en este repo, ver ese mismo documento).
+.memoria-cache/
+
+# Sistema / editores
+.DS_Store
+Thumbs.db
