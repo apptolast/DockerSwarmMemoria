@@ -18,12 +18,15 @@ consumirlo como tal.
 
 ## Por qué existe esto hoy
 
-Hoy este repo no tiene todavía ninguna ejecución de extracción real (ver
-[`program.md`](../program.md), §10). Este documento no describe un grafo que
-ya exista: describe el esquema que se usará en cuanto exista extracción real,
-para que desde el primer documento que se proponga en `DockerSwarmDocs` el
-formato ya sea consistente con este vocabulario, y no haga falta reescribir
-nada retroactivamente.
+Este documento se escribió antes de la primera ejecución real de
+extracción; desde el 2026-07-30 el bot corre a diario y ya ha propuesto
+documentos reales en `DockerSwarmDocs` (ver [`program.md`](../program.md),
+§10, y `memoria/logs/`). Sigue sin existir un grafo persistido y
+consultable: lo que hay hoy son estos documentos Markdown con frontmatter
+aplicando el vocabulario de abajo, no un almacén de grafo real. Este
+documento describe ese vocabulario para que, si algún día se construye un
+grafo real a partir de este contenido, el formato ya sea consistente y no
+haga falta reescribir nada retroactivamente.
 
 ## Nodos
 
