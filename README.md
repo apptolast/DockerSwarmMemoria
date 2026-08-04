@@ -8,12 +8,15 @@ contra [`apptolast/DockerSwarmDocs`](https://github.com/apptolast/DockerSwarmDoc
 — siempre fusionada por un humano, nunca en modo automático.
 
 Este repo está operativo. Los dos secrets están configurados desde el
-2026-07-30 y el bot ya ha corrido de verdad: 9 ejecuciones (3 fallos
-iniciales el 29 y 30 de julio, 6 con éxito desde entonces) y **dos PRs
-propuestas y fusionadas por un humano** en `DockerSwarmDocs` (#1 y #4, ambas
-el 2026-07-30). Nada de lo que produce este bot se publica, despliega ni
-expone en ningún sitio: eso queda fuera de su alcance por diseño (ver
-[`program.md`](program.md), §2 y §3).
+2026-07-30 y el bot ya ha corrido de verdad: hubo varios intentos fallidos
+el propio 2026-07-30, el día en que se configuraron los secrets, antes de
+estabilizarse (el detalle exacto de cada intento vive en
+`memoria/logs/2026-07-30.md`; no se repite la cifra aquí para que no vuelva
+a quedar desactualizada). Desde entonces corre a diario sin fallos. Van
+**tres PRs propuestas y fusionadas por un humano** en `DockerSwarmDocs`
+(#1 y #4, ambas el 2026-07-30, y #10 el 2026-08-03). Nada de lo que produce
+este bot se publica, despliega ni expone en ningún sitio: eso queda fuera
+de su alcance por diseño (ver [`program.md`](program.md), §2 y §3).
 
 Desde el 2026-07-30 el bot informa «sin cambios» en cada ejecución. **Eso es
 comportamiento correcto, no una avería**: la rama `main` de
