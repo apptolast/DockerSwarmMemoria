@@ -1,0 +1,72 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/Cenit-Digital/TemplateSSDUncleBob/harness.schema.json",
+  "title": "harness.config.json",
+  "description": "Configuración del arnés SSD Uncle Bob. Declara los comandos de tu stack para que el motor agnóstico (.harness/harness.mjs) los ejecute.",
+  "type": "object",
+  "required": ["project", "commands"],
+  "additionalProperties": true,
+  "properties": {
+    "$schema": { "type": "string" },
+    "project": {
+      "type": "string",
+      "description": "Nombre del proyecto."
+    },
+    "language": {
+      "type": "string",
+      "description": "Etiqueta informativa del stack (p. ej. python, node, go, generic).",
+      "examples": ["python", "node", "go", "rust", "generic"]
+    },
+    "description": { "type": "string" },
+    "commands": {
+      "type": "object",
+      "description": "Comandos de shell de tu stack. Admiten el token {{py}} (intérprete de Python) y, en mutate, {{target}}.",
+      "additionalProperties": { "type": "string" },
+      "properties": {
+        "install": { "type": "string", "description": "Instala dependencias (opcional)." },
+        "lint": { "type": "string", "description": "Linter/formato. Vacío para omitir." },
+        "test": { "type": "string", "description": "Ejecuta la suite de tests. Debe salir con código 0 si todo pasa." },
+        "mutate": { "type": "string", "description": "Prueba de mutación. Debe salir != 0 si no supera el umbral." },
+        "build": { "type": "string", "description": "Build de producción (opcional)." }
+      }
+    },
+    "paths": {
+      "type": "object",
+      "additionalProperties": { "type": "string" },
+      "properties": {
+        "src": { "type": "string", "default": "src" },
+        "tests": { "type": "string", "default": "tests" },
+        "features": { "type": "string", "default": "features" },
+        "progress": { "type": "string", "default": "progress" },
+        "spec": { "type": "string", "default": "project-spec.md" },
+        "feature_list": { "type": "string", "default": "feature_list.json" }
+      }
+    },
+    "mutation": {
+      "type": "object",
+      "properties": {
+        "threshold": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "default": 0.8,
+          "description": "Puntuación mínima de mutación (proporción de mutantes muertos) para cerrar una feature."
+        },
+        "targets": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Ficheros/módulos sobre los que corre la mutación."
+        }
+      }
+    },
+    "rules": {
+      "type": "object",
+      "properties": {
+        "one_feature_at_a_time": { "type": "boolean", "default": true },
+        "require_approved_spec_to_implement": { "type": "boolean", "default": true },
+        "require_tests_to_close": { "type": "boolean", "default": true },
+        "require_mutation_to_close": { "type": "boolean", "default": true }
+      }
+    }
+  }
+}

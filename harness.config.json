@@ -1,0 +1,32 @@
+{
+  "$schema": "./harness.schema.json",
+  "project": "DockerSwarmMemoria",
+  "language": "yaml+bash (GitHub Actions) — sin package.json ni src/ en un lenguaje de propósito general",
+  "description": "Adaptación de TemplateSSDUncleBob para un bot narrow-scope sin código de aplicación tradicional (ver docs/adopcion-templatessd.md). La única lógica ejecutable de este repo es .github/workflows/daily-memory.yml (YAML + bash embebido en los pasos 'scope' y 'Record run log and advance checkpoint'), más un paso agéntico (anthropics/claude-code-action) gobernado por el contrato en lenguaje natural de program.md y el vocabulario de schema/graph-vocabulary.md. commands.test usa actionlint (github.com/rhysd/actionlint): el linter real y estándar para workflows de GitHub Actions, que valida YAML/expresiones de contexto y pasa shellcheck sobre cada bloque 'run:' si shellcheck está instalado. No hay commands.mutate: no existe una herramienta de mutación real para YAML/bash de Actions (a diferencia de StrykerJS/gremlins/cargo-mutants/PIT para lenguajes de propósito general) y este repo no tiene código fuente propio que mutar — ver docs/adopcion-templatessd.md, sección 'Por qué no hay mutación', antes de rellenar ese campo con algo inventado.",
+  "standalone": true,
+  "commands": {
+    "install": "",
+    "lint": "",
+    "test": "actionlint",
+    "mutate": "",
+    "build": ""
+  },
+  "paths": {
+    "src": ".github/workflows",
+    "tests": "tests",
+    "features": "features",
+    "progress": "progress",
+    "spec": "project-spec.md",
+    "feature_list": "feature_list.json"
+  },
+  "mutation": {
+    "threshold": 0.8,
+    "targets": []
+  },
+  "rules": {
+    "one_feature_at_a_time": true,
+    "require_approved_spec_to_implement": true,
+    "require_tests_to_close": true,
+    "require_mutation_to_close": false
+  }
+}

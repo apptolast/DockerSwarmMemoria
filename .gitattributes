@@ -1,0 +1,6 @@
+# Preserva la fidelidad de los ficheros copiados tal cual desde
+# TemplateSSDUncleBob (ver docs/adopcion-templatessd.md). Misma convención
+# que el propio arnés: scripts POSIX en LF (un CRLF rompe el shebang en
+# Linux), scripts de PowerShell en CRLF.
+scripts/sync-memoria.sh  text eol=lf
+scripts/sync-memoria.ps1 text eol=crlf
