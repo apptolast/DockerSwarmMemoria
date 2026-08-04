@@ -72,22 +72,81 @@
       `@s → verificación` que exige la plantilla original — no se
       fabrican de antemano solo para marcar esta casilla.
 
-## C7 — Prueba de mutación — no aplica, con razón explícita
+## C7 — Prueba de mutación
 
-- [ ] `harness.config.json` → `rules.require_mutation_to_close` es `false`
-      y `commands.mutate` está vacío, **a propósito**: no existe una
-      herramienta de mutación real para YAML/bash de GitHub Actions (a
-      diferencia de StrykerJS, gremlins, cargo-mutants o PIT en lenguajes de
-      propósito general) y este repo no tiene código fuente propio que
-      mutar. Ver `docs/adopcion-templatessd.md`, sección "Por qué no hay
-      mutación", antes de "arreglar" esta casilla con un comando inventado.
+- [x] **Para `.github/workflows/daily-memory.yml` (YAML + bash, producción):
+      sigue sin aplicar, sin cambios.** No existe una herramienta de
+      mutación real para YAML/bash de GitHub Actions (a diferencia de
+      StrykerJS, gremlins, cargo-mutants o PIT en lenguajes de propósito
+      general). Ver `docs/adopcion-templatessd.md`, sección "Por qué no hay
+      mutación".
+- [ ] **Para `scripts/rag/` y `scripts/graph/` (Python real, añadido en el
+      pilot de RAG + grafo de esta sesión): intentado de verdad con una
+      herramienta real, bloqueado por una incompatibilidad de estructura
+      concreta — no simplemente omitido.** Este repo dejó de estar cubierto
+      por la razón de arriba en cuanto ganó código fuente propio en un
+      lenguaje de propósito general (exactamente el disparador que esta
+      misma sección pedía vigilar — ver nota al final de este documento).
+      Antes de escribir esta casilla como "no aplica" otra vez, se intentó
+      de verdad:
+      - Se instaló `mutmut` 3.7.0 (PyPI, la misma familia de herramienta que
+        StrykerJS/gremlins/cargo-mutants/PIT para Python) — instala limpio
+        en este sandbox (a diferencia de `actionlint` vía `go install`, ver
+        `docs/adopcion-templatessd.md`).
+      - `source_paths` (config real, `setup.cfg`) localiza y muta
+        correctamente los 4 módulos reales (`build_index.py`, `query.py`,
+        `build_graph.py`, `query_graph.py`) — verificado, no simulado.
+      - Se añadieron envoltorios pytest triviales (`test_calibration_regression`,
+        `test_graph_regression`) sobre los `main()` ya existentes, para que
+        una herramienta basada en pytest pudiera ejecutar la regresión real
+        sin reescribirla — estos envoltorios SÍ se conservan en el repo
+        (son útiles por sí mismos con cualquier runner pytest, no solo con
+        `mutmut`) aunque `mutmut` en sí no se haya adoptado.
+      - **Bloqueo real encontrado** (reproducido, no hipotético): `mutmut`
+        ejecuta los tests dentro de una copia aislada del repo
+        (`mutants/`), y solo copia a esa copia los ficheros de test que
+        vivan en una carpeta `tests/`/`test/` o que coincidan con el patrón
+        `test*.py` **en la raíz del repo** (código fuente de `mutmut`,
+        `configuration.py`, lista `also_copy`) — no descubre tests
+        anidados junto a su propio código fuente, que es exactamente cómo
+        vive `test_calibration.py`/`test_graph.py` en este repo (junto a
+        `build_index.py`/`build_graph.py`, no en una carpeta `tests/`
+        separada). Añadir esos ficheros a mano vía `also_copy` resuelve la
+        copia, pero expone un segundo problema: `DEFAULT_DOCS_PATH` en
+        ambos tests localiza el checkout hermano de `DockerSwarmDocs` con
+        una ruta relativa a `Path(__file__).parent` de profundidad fija
+        (`../../../DockerSwarmDocs/...`) — profundidad que asume que el
+        fichero vive exactamente 3 niveles bajo el repo. Dentro de
+        `mutants/`, `mutmut` inserta un nivel adicional de anidamiento, así
+        que esa misma ruta relativa deja de apuntar al checkout real.
+      - **Por qué no se fuerza un arreglo aquí**: solucionarlo exigiría o
+        bien reestructurar dónde viven los tests de este repo (mover
+        `test_calibration.py`/`test_graph.py` a una carpeta `tests/`
+        separada, rompiendo la convención ya usada en el resto de esta
+        entrega y en `AGENTS.md`/los dos READMEs de `scripts/`), o bien
+        cambiar cómo estos tests localizan el corpus hermano (p. ej. una
+        variable de entorno en vez de una ruta relativa de profundidad
+        fija) — ambos cambios modificarían código de producción de este
+        pilot solo para acomodar el modelo de sandboxing de una herramienta
+        de desarrollo concreta, exactamente la clase de sobre-ingeniería
+        que `docs/adrs/0001-*.md` y `0002-*.md` ya deciden evitar en otros
+        puntos de este mismo pilot.
+      - **Disparador de revisión**: si `scripts/rag`/`scripts/graph` crecen
+        lo suficiente como para que la ausencia de mutation testing deje de
+        ser proporcional, o si este repo adopta una carpeta `tests/`
+        convencional por otro motivo (con lo que el primer bloqueo
+        desaparecería solo), revisar esta casilla primero.
 
 ---
 
 **Cómo usar este archivo:** quien revise un cambio a este repo (humano o
 agente) recorre C1-C7. A diferencia de la plantilla original, C6 y C7 aquí
-documentan una ausencia **deliberada y justificada**, no una casilla vacía
-por descuido. Si alguna vez dejan de estar justificadas — por ejemplo, si
-aparece una herramienta de mutación real para Actions, o el bot gana código
-fuente propio en un `src/` genuino — **actualiza esta sección primero**, no
-la dejes desactualizada.
+documentan una ausencia **deliberada y justificada** (o, para C7 en
+`scripts/rag`/`scripts/graph` desde el pilot de RAG + grafo, un intento real
+y un bloqueo concreto documentado — no un "no aplica" reflejo), no una
+casilla vacía por descuido. El disparador que este párrafo pedía vigilar
+("el bot gana código fuente propio en un `src/` genuino") ya se activó una
+vez, con ese pilot, y C7 se actualizó en consecuencia en vez de dejarse
+desactualizado — la próxima vez que algo similar ocurra (nueva herramienta
+de mutación real para Actions, o este mismo bloqueo de estructura
+desaparece), **actualiza esta sección primero**, no la dejes desactualizada.

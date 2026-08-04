@@ -40,10 +40,26 @@
 | `.github/workflows/daily-memory.yml` | La única lógica ejecutable de este repo: workflow diario (bash puro + un paso agéntico `anthropics/claude-code-action` sin shell ni red) | Antes de cambiar el pipeline de extracción |
 | `memoria/logs/` · `memoria/estado/` | Bitácora por ejecución y checkpoint incremental — estado mutable real del bot | Para contexto de ejecuciones recientes |
 | `harness.config.json` (+ `harness.schema.json`) | ⭐ Comandos REALES de verificación de este stack, adaptados (no inventados) | Antes de tocar el arnés o de proponer un cambio al workflow |
-| `CHECKPOINTS.md` | Criterios objetivos de "estado final correcto", adaptados a este stack (incluye por qué C6/C7 están marcados no-aplica) | Para auto-evaluarte al cerrar una sesión |
+| `CHECKPOINTS.md` | Criterios objetivos de "estado final correcto", adaptados a este stack (incluye por qué C6 no aplica y el estado real, no solo "no aplica", de C7 tanto para `daily-memory.yml` como para `scripts/rag`/`scripts/graph`) | Para auto-evaluarte al cerrar una sesión |
 | `docs/adopcion-templatessd.md` | Cómo convive el arnés SDD con la lógica ya existente del bot; qué se adoptó, qué no se vendorizó y por qué | Antes de aplicar cualquier fase del pipeline a un cambio real |
 | `scripts/sync-memoria.sh` (`.ps1`) | Sincroniza patrones validados de la organización en `.memoria-cache/` (paso 2bis, no bloqueante) | Al arrancar sesión |
 | `CLAUDE.md` | Protocolo de arranque de Claude Code en este repo | Siempre, al empezar sesión con Claude Code |
+| `scripts/rag/` (+ su propio `README.md`) | Pilot de recuperación léxica BM25 sobre el corpus de `DockerSwarmDocs` — manual, de solo lectura, cero dependencias externas. Ver `docs/adrs/0001-rag-pilot-lexical-retrieval.md` | Al tocar el pilot de RAG, o antes de decidir si algún día se conecta a producción |
+| `scripts/graph/` (+ su propio `README.md`) | Pilot de grafo de conocimiento declarativo (Capa 1, `schema/graph-vocabulary.md` aplicado al frontmatter real) sobre el mismo corpus — manual, de solo lectura. Ver `docs/adrs/0002-graph-assembly-declarative-layer.md` | Al tocar el pilot de grafo, o antes de decidir si algún día se conecta a producción |
+| `.github/workflows/rag-pilot.yml` | Workflow manual (`workflow_dispatch`), permisos de solo lectura, para consultar los dos pilots de arriba — deliberadamente separado de `daily-memory.yml`, no lo toca | Al ejecutar o modificar el pilot en CI |
+| `docs/adrs/` | Decisiones del pilot de RAG + grafo (ADR-0001 BM25 vs. embeddings, ADR-0002 grafo declarativo) — mismo espíritu que las ADRs de `sistema-central-admin-servidor`, adaptado a este repo | Antes de modificar `scripts/rag/` o `scripts/graph/` |
+| `rag/` | Artefactos generados por los dos pilots (`index.json`, `graph.json`) — nunca se editan a mano, no están comprometidos a git (ver `.gitignore`) | Nunca hace falta leerlo directamente; se regenera con los scripts de arriba |
+
+**Sobre el pilot de RAG + grafo (`scripts/rag/`, `scripts/graph/`,
+`.github/workflows/rag-pilot.yml`, `docs/adrs/`, `rag/`):** es aditivo y de
+solo lectura — no modifica `program.md`, `schema/graph-vocabulary.md` ni
+`.github/workflows/daily-memory.yml`, no escribe en
+`DockerSwarmInfrastrcture` ni en `DockerSwarmDocs`, y no se dispara solo
+(`workflow_dispatch` manual únicamente). Las reglas duras de la Sección 3 le
+aplican igual que al resto del repo; se documenta aparte aquí solo porque es
+la incorporación más reciente y todavía no forma parte del contrato de
+producción del bot (`program.md`) — esa es una decisión futura y explícita
+de quien mantiene el repo, no algo que este pilot de por sí implique.
 
 ## 3. Reglas duras (no negociables)
 

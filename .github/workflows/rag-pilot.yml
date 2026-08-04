@@ -1,0 +1,109 @@
+name: RAG + graph pilot query (manual)
+
+# Contrato de comportamiento de este workflow: docs/adrs/0001-rag-pilot-lexical-retrieval.md
+# y docs/adrs/0002-graph-assembly-declarative-layer.md (raíz del repo).
+# Vocabulario/citas: mismo formato que schema/graph-vocabulary.md y que el
+# CitationValidator de apptolast/sistema-central-admin-servidor (ver
+# ADR-0004 de ese repo), adaptado a scripts propios en vez de middleware
+# Kotlin.
+#
+# Deliberadamente SEPARADO de daily-memory.yml: no toca su lógica, su
+# checkpoint ni su presupuesto. Es una herramienta de consulta manual sobre
+# el mismo corpus (DockerSwarmDocs), no una nueva vía de propuesta de PRs —
+# este workflow no escribe nada, en ningún repo, bajo ninguna circunstancia
+# (ver permissions abajo: solo lectura).
+
+"on":
+  workflow_dispatch:
+    inputs:
+      question:
+        description: "Pregunta a responder contra el corpus (recuperación BM25). Vacío para omitir."
+        required: false
+        type: string
+        default: ""
+      top_k:
+        description: "Número máximo de chunks a devolver para la pregunta"
+        required: false
+        type: string
+        default: "5"
+      graph_impact_of:
+        description: "Id de entidad (p. ej. policy:compuertas-abiertas) para consultar impact() en el grafo. Vacío para omitir."
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  query:
+    name: Build index+graph and answer (retrieval + traversal, no write access)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout DockerSwarmMemoria (this repo)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+        with:
+          path: memoria-bot
+
+      # Mismo secret y mismo patrón de checkout que daily-memory.yml usa para
+      # leer DockerSwarmDocs — no se inventa un mecanismo de acceso nuevo.
+      - name: Checkout DockerSwarmDocs (read-only corpus)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+        with:
+          repository: apptolast/DockerSwarmDocs
+          token: ${{ secrets.DOCKERSWARM_BOT_PAT }}
+          path: dockerswarm-docs
+          persist-credentials: false
+
+      # setup-python (no solo el python3 preinstalado del runner) porque el
+      # paso de grafo sí necesita instalar networkx vía pip — el de RAG
+      # léxico (build_index.py/query.py) sigue sin depender de esto.
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: memoria-bot/scripts/graph/requirements.txt
+
+      - name: Install graph dependencies (networkx only)
+        run: pip install -r memoria-bot/scripts/graph/requirements.txt
+
+      - name: Build BM25 index from DockerSwarmDocs
+        working-directory: memoria-bot/scripts/rag
+        run: |
+          set -euo pipefail
+          python3 build_index.py \
+            --docs-path "$GITHUB_WORKSPACE/dockerswarm-docs/src/content/docs" \
+            --output "$GITHUB_WORKSPACE/memoria-bot/rag/index.json"
+
+      - name: Answer the question (retrieval + citation validation)
+        if: inputs.question != ''
+        working-directory: memoria-bot/scripts/rag
+        env:
+          QUESTION: ${{ inputs.question }}
+          TOP_K: ${{ inputs.top_k }}
+        run: |
+          set -euo pipefail
+          python3 query.py \
+            --index "$GITHUB_WORKSPACE/memoria-bot/rag/index.json" \
+            --question "$QUESTION" \
+            --top-k "$TOP_K"
+
+      - name: Build declarative knowledge graph (Capa 1) from DockerSwarmDocs
+        working-directory: memoria-bot/scripts/graph
+        run: |
+          set -euo pipefail
+          python3 build_graph.py \
+            --docs-path "$GITHUB_WORKSPACE/dockerswarm-docs/src/content/docs" \
+            --output "$GITHUB_WORKSPACE/memoria-bot/rag/graph.json"
+
+      - name: Graph impact query (cascading dependents)
+        if: inputs.graph_impact_of != ''
+        working-directory: memoria-bot/scripts/graph
+        env:
+          ENTITY_ID: ${{ inputs.graph_impact_of }}
+        run: |
+          set -euo pipefail
+          python3 query_graph.py --graph "$GITHUB_WORKSPACE/memoria-bot/rag/graph.json" impact "$ENTITY_ID"

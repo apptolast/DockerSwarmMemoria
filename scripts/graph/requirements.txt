@@ -1,0 +1,9 @@
+# Única dependencia externa de scripts/graph/ (build_graph.py, query_graph.py,
+# test_graph.py) — ver docs/adrs/0002-graph-assembly-declarative-layer.md.
+# scripts/rag/ (build_index.py, query.py, test_calibration.py) NO necesita
+# este fichero: usa solo la librería estándar de Python 3 (ver
+# docs/adrs/0001-rag-pilot-lexical-retrieval.md).
+#
+# Versión mínima fijada en la que se desarrolló y verificó este pilot
+# (networkx 3.6.1, PyPI, licencia BSD-3-Clause) — no una cota arbitraria.
+networkx>=3.6.1

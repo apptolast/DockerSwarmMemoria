@@ -4,6 +4,19 @@
 # TemplateSSDUncleBob (no vendorizado en este repo, ver ese mismo documento).
 .memoria-cache/
 
+# Artefactos generados del pilot RAG + grafo (ver docs/adrs/0001-*.md y
+# 0002-*.md): se reconstruyen bajo demanda desde el corpus real de
+# DockerSwarmDocs (scripts/rag/build_index.py, scripts/graph/build_graph.py)
+# o en CI (.github/workflows/rag-pilot.yml) — comprometerlos a git los
+# dejaría obsoletos en cuanto el corpus fuente cambie, sin ningún paso
+# automático que los regenere todavía.
+rag/index.json
+rag/graph.json
+
+# Cachés de bytecode de Python (scripts/rag/, scripts/graph/)
+__pycache__/
+*.pyc
+
 # Sistema / editores
 .DS_Store
 Thumbs.db
