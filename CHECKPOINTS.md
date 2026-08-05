@@ -80,73 +80,77 @@
       StrykerJS, gremlins, cargo-mutants o PIT en lenguajes de propósito
       general). Ver `docs/adopcion-templatessd.md`, sección "Por qué no hay
       mutación".
-- [ ] **Para `scripts/rag/` y `scripts/graph/` (Python real, añadido en el
-      pilot de RAG + grafo de esta sesión): intentado de verdad con una
-      herramienta real, bloqueado por una incompatibilidad de estructura
-      concreta — no simplemente omitido.** Este repo dejó de estar cubierto
+- [x] **Para `scripts/rag/` y `scripts/graph/` (Python real, añadido en el
+      pilot de RAG + grafo): implementada de verdad y corriendo, con
+      `scripts/mutate.py` — no `mutmut`.** Este repo dejó de estar cubierto
       por la razón de arriba en cuanto ganó código fuente propio en un
-      lenguaje de propósito general (exactamente el disparador que esta
-      misma sección pedía vigilar — ver nota al final de este documento).
-      Antes de escribir esta casilla como "no aplica" otra vez, se intentó
-      de verdad:
-      - Se instaló `mutmut` 3.7.0 (PyPI, la misma familia de herramienta que
-        StrykerJS/gremlins/cargo-mutants/PIT para Python) — instala limpio
-        en este sandbox (a diferencia de `actionlint` vía `go install`, ver
-        `docs/adopcion-templatessd.md`).
-      - `source_paths` (config real, `setup.cfg`) localiza y muta
-        correctamente los 4 módulos reales (`build_index.py`, `query.py`,
-        `build_graph.py`, `query_graph.py`) — verificado, no simulado.
-      - Se añadieron envoltorios pytest triviales (`test_calibration_regression`,
-        `test_graph_regression`) sobre los `main()` ya existentes, para que
-        una herramienta basada en pytest pudiera ejecutar la regresión real
-        sin reescribirla — estos envoltorios SÍ se conservan en el repo
-        (son útiles por sí mismos con cualquier runner pytest, no solo con
-        `mutmut`) aunque `mutmut` en sí no se haya adoptado.
-      - **Bloqueo real encontrado** (reproducido, no hipotético): `mutmut`
-        ejecuta los tests dentro de una copia aislada del repo
-        (`mutants/`), y solo copia a esa copia los ficheros de test que
-        vivan en una carpeta `tests/`/`test/` o que coincidan con el patrón
-        `test*.py` **en la raíz del repo** (código fuente de `mutmut`,
-        `configuration.py`, lista `also_copy`) — no descubre tests
-        anidados junto a su propio código fuente, que es exactamente cómo
-        vive `test_calibration.py`/`test_graph.py` en este repo (junto a
-        `build_index.py`/`build_graph.py`, no en una carpeta `tests/`
-        separada). Añadir esos ficheros a mano vía `also_copy` resuelve la
-        copia, pero expone un segundo problema: `DEFAULT_DOCS_PATH` en
-        ambos tests localiza el checkout hermano de `DockerSwarmDocs` con
-        una ruta relativa a `Path(__file__).parent` de profundidad fija
-        (`../../../DockerSwarmDocs/...`) — profundidad que asume que el
-        fichero vive exactamente 3 niveles bajo el repo. Dentro de
-        `mutants/`, `mutmut` inserta un nivel adicional de anidamiento, así
-        que esa misma ruta relativa deja de apuntar al checkout real.
-      - **Por qué no se fuerza un arreglo aquí**: solucionarlo exigiría o
-        bien reestructurar dónde viven los tests de este repo (mover
-        `test_calibration.py`/`test_graph.py` a una carpeta `tests/`
-        separada, rompiendo la convención ya usada en el resto de esta
-        entrega y en `AGENTS.md`/los dos READMEs de `scripts/`), o bien
-        cambiar cómo estos tests localizan el corpus hermano (p. ej. una
-        variable de entorno en vez de una ruta relativa de profundidad
-        fija) — ambos cambios modificarían código de producción de este
-        pilot solo para acomodar el modelo de sandboxing de una herramienta
-        de desarrollo concreta, exactamente la clase de sobre-ingeniería
-        que `docs/adrs/0001-*.md` y `0002-*.md` ya deciden evitar en otros
-        puntos de este mismo pilot.
-      - **Disparador de revisión**: si `scripts/rag`/`scripts/graph` crecen
-        lo suficiente como para que la ausencia de mutation testing deje de
-        ser proporcional, o si este repo adopta una carpeta `tests/`
-        convencional por otro motivo (con lo que el primer bloqueo
-        desaparecería solo), revisar esta casilla primero.
+      lenguaje de propósito general (el disparador que esta misma sección
+      pedía vigilar — ver nota al final de este documento). El primer
+      intento real fue con `mutmut` 3.7.0 (PyPI): instala limpio en este
+      sandbox, pero se encontró un bloqueo de estructura real y reproducido
+      (su sandboxing en `mutants/` no descubre tests anidados junto a su
+      propio código fuente, y la ruta relativa de profundidad fija que usan
+      esos tests para localizar el checkout hermano de `DockerSwarmDocs` se
+      rompe dentro de esa copia anidada). En vez de reestructurar el repo
+      para acomodar una herramienta de terceros concreta, se adaptó el
+      mutador propio que ya prescribe `TemplateSSDUncleBob`
+      (`examples/python-notes-cli/tools/mutate.py`: mutación a nivel de
+      token, sin sandboxing, muta el fichero real en su sitio y lo restaura
+      siempre) como `scripts/mutate.py` de este repo — sin ese sandboxing no
+      hay clase de bloqueo que evitar. Resultados reales, verificados
+      (detalle completo, incluida la triage de cada superviviente, en
+      `docs/adrs/0001-rag-pilot-lexical-retrieval.md` y
+      `docs/adrs/0002-graph-assembly-declarative-layer.md`, sección "Prueba
+      de mutación" de cada una):
+      | Fichero | Mutantes | Muertos | Score |
+      | --- | --- | --- | --- |
+      | `scripts/rag/query.py` | 44 | 18 | 40.9% |
+      | `scripts/rag/build_index.py` | 47 | 19 | 40.4% |
+      | `scripts/graph/build_graph.py` | 42 | 19 | 45.2% |
+      | `scripts/graph/query_graph.py` | 43 | 20 | 46.5% |
+
+      No se persigue el 100%: la mayoría de los supervivientes son código
+      solo-CLI que esta suite (deliberadamente ligera, no exhaustiva por
+      diseño — ver docstring de cada test) no ejercita, ramas defensivas
+      para frontmatter malformado que el corpus real nunca produce, o
+      precisión de redondeo/reporting nunca comprobada byte a byte. El único
+      hallazgo de alto valor real (la doble guarda anti-alucinación de
+      `answer()` en `query.py` podía degradarse de `or` a `and` sin que
+      ningún test lo notara) sí se cerró con un caso de calibración nuevo —
+      ver las ADR.
+
+## C7bis — Bug real encontrado en el propio mutador
+
+Durante esta implementación, `scripts/mutate.py` reportó al principio una
+puntuación mucho más baja de la real (6.8%, 3/44, en `query.py`) que
+contradecía una verificación manual independiente de uno de los mutantes.
+Investigado a fondo (no descartado como ruido): el bytecode cacheado por
+CPython (`__pycache__/*.pyc`) podía sobrevivir entre dos mutantes sucesivos
+cuando la resolución de mtime del filesystem de este sandbox es más gruesa
+que el tiempo entre dos escrituras del bucle de mutación — el subproceso de
+test cargaba código de un mutante anterior en vez del que `main()` acababa
+de escribir. Corregido en el propio `scripts/mutate.py`
+(`PYTHONDONTWRITEBYTECODE=1` forzado en cada subproceso de test +
+`__pycache__` borrado antes de empezar) — puntuación real tras el arreglo:
+40.9%, no 6.8%. Ver el docstring de `run_tests()`/`clear_pycache()` en
+`scripts/mutate.py` para el detalle completo. Se documenta aquí porque es
+exactamente el tipo de hallazgo que C7 existe para forzar a encontrar: sin
+correr la herramienta de verdad contra un caso ya verificado a mano, este
+falso negativo habría quedado sin detectar.
 
 ---
 
 **Cómo usar este archivo:** quien revise un cambio a este repo (humano o
-agente) recorre C1-C7. A diferencia de la plantilla original, C6 y C7 aquí
-documentan una ausencia **deliberada y justificada** (o, para C7 en
-`scripts/rag`/`scripts/graph` desde el pilot de RAG + grafo, un intento real
-y un bloqueo concreto documentado — no un "no aplica" reflejo), no una
-casilla vacía por descuido. El disparador que este párrafo pedía vigilar
-("el bot gana código fuente propio en un `src/` genuino") ya se activó una
-vez, con ese pilot, y C7 se actualizó en consecuencia en vez de dejarse
-desactualizado — la próxima vez que algo similar ocurra (nueva herramienta
-de mutación real para Actions, o este mismo bloqueo de estructura
-desaparece), **actualiza esta sección primero**, no la dejes desactualizada.
+agente) recorre C1-C7. A diferencia de la plantilla original, C6 aquí
+documenta una ausencia **deliberada y justificada** (no una casilla vacía
+por descuido), y C7 en `scripts/rag`/`scripts/graph` documenta una prueba de
+mutación real, implementada y corriendo (no un "no aplica" reflejo, ni un
+bloqueo sin resolver). El disparador que este párrafo pedía vigilar ("el bot
+gana código fuente propio en un `src/` genuino") ya se activó, con ese
+pilot, y C7 se actualizó en consecuencia dos veces — primero documentando el
+bloqueo real de `mutmut`, después reemplazando esa entrada al comprobar que
+el mutador propio de la plantilla sí funciona aquí — en vez de dejarse
+desactualizada. La próxima vez que algo similar ocurra (nueva herramienta de
+mutación real para Actions, o `scripts/rag`/`scripts/graph` crecen lo
+bastante como para que valga la pena perseguir más supervivientes),
+**actualiza esta sección primero**, no la dejes desactualizada.

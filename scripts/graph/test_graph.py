@@ -29,12 +29,14 @@ Uso:
 """
 from __future__ import annotations
 
+import json
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from build_graph import build_graph, never_referenced_entities  # noqa: E402
-from query_graph import children, depends_on_closure, impact, leaves, path  # noqa: E402
+from build_graph import build_graph, graph_to_jsonable, never_referenced_entities  # noqa: E402
+from query_graph import children, depends_on_closure, impact, leaves, load_graph, path  # noqa: E402
 
 DEFAULT_DOCS_PATH = Path(__file__).parent / "../../../DockerSwarmDocs/src/content/docs"
 
@@ -135,6 +137,32 @@ def main() -> int:
     check("impact(diagnosticos-conocidos): la cita del salto used-by apunta a "
           "diagnosticos-conocidos.md (quien declara), no a agentes-operadores.md",
           diag_citation_ok, f"obtenido {diag_entry['path'] if diag_entry else None}")
+
+    # --- Round-trip real por JSON: build_graph() -> graph_to_jsonable() ->
+    # load_graph() -> misma respuesta ---
+    # Hasta aquí este test solo ejercita el grafo EN MEMORIA que devuelve
+    # build_graph(); nunca pasa por graph_to_jsonable()/load_graph(), que es
+    # el camino que SÍ usa de verdad rag-pilot.yml en producción
+    # (build_graph.py escribe rag/graph.json a disco, query_graph.py lo
+    # relee con --graph). Encontrado con scripts/mutate.py: sin este caso,
+    # mutar `directed=True`/`multigraph=True` en `load_graph()`
+    # (query_graph.py) o la forma del dict de `graph_to_jsonable()`
+    # sobrevivía sin que ningún test lo notara — ver
+    # docs/adrs/0002-graph-assembly-declarative-layer.md, "Prueba de
+    # mutación".
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        graph_json_path = Path(tmp_dir) / "graph.json"
+        jsonable = graph_to_jsonable(graph, "apptolast/DockerSwarmDocs", "8eb4497")
+        graph_json_path.write_text(json.dumps(jsonable, ensure_ascii=False), encoding="utf-8")
+        reloaded_graph, reloaded_meta = load_graph(graph_json_path)
+        reloaded_impact = impact(reloaded_graph, "policy:compuertas-abiertas")
+        reloaded_impacted_ids = {e["entity"] for e in reloaded_impact["impacted"]}
+    check("round-trip JSON (graph_to_jsonable+load_graph): impact(compuertas-abiertas) "
+          "da las mismas 4 entidades que el grafo en memoria",
+          reloaded_impacted_ids == EXPECTED_IMPACT_COMPUERTAS, f"obtenido {sorted(reloaded_impacted_ids)}")
+    check("round-trip JSON: node_count/edge_count del dict serializado coinciden con el grafo real",
+          reloaded_meta["node_count"] == EXPECTED_NODE_COUNT and reloaded_meta["edge_count"] == EXPECTED_EDGE_COUNT,
+          f"obtenido node_count={reloaded_meta.get('node_count')}, edge_count={reloaded_meta.get('edge_count')}")
 
     # --- Caso de error: entidad inexistente ---
     try:

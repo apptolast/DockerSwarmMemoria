@@ -2,13 +2,13 @@
   "$schema": "./harness.schema.json",
   "project": "DockerSwarmMemoria",
   "language": "yaml+bash (GitHub Actions, producción: daily-memory.yml) + Python 3.12 sin dependencias externas salvo networkx (scripts/rag y scripts/graph, pilot de RAG + grafo — ver docs/adrs/0001-rag-pilot-lexical-retrieval.md y 0002-graph-assembly-declarative-layer.md)",
-  "description": "Adaptación de TemplateSSDUncleBob para un bot narrow-scope sin código de aplicación tradicional (ver docs/adopcion-templatessd.md). La única lógica ejecutable de PRODUCCIÓN de este repo sigue siendo .github/workflows/daily-memory.yml (YAML + bash embebido en los pasos 'scope' y 'Record run log and advance checkpoint'), más un paso agéntico (anthropics/claude-code-action) gobernado por el contrato en lenguaje natural de program.md y el vocabulario de schema/graph-vocabulary.md. Añadido en esta sesión, aditivo y NO conectado a daily-memory.yml: scripts/rag/ (recuperación léxica BM25, cero dependencias) y scripts/graph/ (grafo declarativo Capa 1, solo networkx) — un pilot manual disparado por .github/workflows/rag-pilot.yml (workflow_dispatch, solo lectura), ver docs/adrs/0001-*.md y 0002-*.md. commands.test encadena los tres verificadores reales de este stack: actionlint (github.com/rhysd/actionlint, el linter real y estándar para workflows de GitHub Actions, valida YAML/expresiones de contexto y pasa shellcheck sobre cada bloque 'run:' si shellcheck está instalado) y los dos scripts de regresión Python (test_calibration.py, test_graph.py — ambos se auto-omiten con salida 0 si no hay un checkout hermano de DockerSwarmDocs, nunca fingen un resultado que no pudieron verificar). commands.mutate sigue vacío: para daily-memory.yml (YAML/bash) no existe herramienta de mutación real, sin cambios (ver docs/adopcion-templatessd.md). Para scripts/rag y scripts/graph SÍ existe código Python real que mutar — se intentó de verdad con mutmut (PyPI) y se encontró un bloqueo de estructura concreto y documentado, no una omisión — ver CHECKPOINTS.md, C7, antes de rellenar este campo con algo inventado.",
+  "description": "Adaptación de TemplateSSDUncleBob para un bot narrow-scope sin código de aplicación tradicional (ver docs/adopcion-templatessd.md). La única lógica ejecutable de PRODUCCIÓN de este repo sigue siendo .github/workflows/daily-memory.yml (YAML + bash embebido en los pasos 'scope' y 'Record run log and advance checkpoint'), más un paso agéntico (anthropics/claude-code-action) gobernado por el contrato en lenguaje natural de program.md y el vocabulario de schema/graph-vocabulary.md. Añadido en esta sesión, aditivo y NO conectado a daily-memory.yml: scripts/rag/ (recuperación léxica BM25, cero dependencias) y scripts/graph/ (grafo declarativo Capa 1, solo networkx) — un pilot manual disparado por .github/workflows/rag-pilot.yml (workflow_dispatch, solo lectura), ver docs/adrs/0001-*.md y 0002-*.md. commands.test encadena los tres verificadores reales de este stack: actionlint (github.com/rhysd/actionlint, el linter real y estándar para workflows de GitHub Actions, valida YAML/expresiones de contexto y pasa shellcheck sobre cada bloque 'run:' si shellcheck está instalado) y los dos scripts de regresión Python (test_calibration.py, test_graph.py — ambos se auto-omiten con salida 0 si no hay un checkout hermano de DockerSwarmDocs, nunca fingen un resultado que no pudieron verificar). commands.mutate: para daily-memory.yml (YAML/bash) sigue sin existir herramienta de mutación real, sin cambios (ver docs/adopcion-templatessd.md). Para scripts/rag y scripts/graph SÍ hay mutation testing real, implementado con scripts/mutate.py (adaptado del propio tools/mutate.py de TemplateSSDUncleBob, no mutmut de PyPI — mutmut se intentó de verdad primero y se encontró un bloqueo de estructura real, documentado en CHECKPOINTS.md C7 y en las dos ADR). No es un único comando gate/no-gate (dos áreas Python con su propia suite cada una) — ver el propio valor de commands.mutate abajo y docs/adrs/0001-*.md/0002-*.md, sección 'Prueba de mutación', para los 4 comandos reales (uno por fichero) y sus resultados. mutation.threshold (0.8) y rules.require_mutation_to_close (false) se dejan sin tocar a propósito: este repo no vendoriza feature_list.json (ver C6 de CHECKPOINTS.md), así que no hay ningún flujo de 'cerrar una feature' al que aplicar ese umbral — la prueba de mutación aquí es diagnóstica (documenta agujeros reales y cuáles se aceptan y por qué), no un gate automático.",
   "standalone": true,
   "commands": {
     "install": "pip install -r scripts/graph/requirements.txt",
-    "lint": "",
-    "test": "actionlint && python3 scripts/rag/test_calibration.py && python3 scripts/graph/test_graph.py",
-    "mutate": "",
+    "lint": "ruff check scripts/rag/ scripts/graph/ scripts/mutate.py",
+    "test": "actionlint && ruff check scripts/rag/ scripts/graph/ scripts/mutate.py && python3 scripts/rag/test_calibration.py && python3 scripts/graph/test_graph.py",
+    "mutate": "python3 scripts/mutate.py <fichero.py> --test-cmd \"<suite correspondiente>\" — 4 invocaciones reales (build_index.py y query.py con test_calibration.py; build_graph.py y query_graph.py con test_graph.py), ver docs/adrs/0001-rag-pilot-lexical-retrieval.md y 0002-graph-assembly-declarative-layer.md, sección 'Prueba de mutación', para los comandos exactos y los resultados",
     "build": ""
   },
   "paths": {
@@ -21,7 +21,12 @@
   },
   "mutation": {
     "threshold": 0.8,
-    "targets": []
+    "targets": [
+      "scripts/rag/build_index.py",
+      "scripts/rag/query.py",
+      "scripts/graph/build_graph.py",
+      "scripts/graph/query_graph.py"
+    ]
   },
   "rules": {
     "one_feature_at_a_time": true,

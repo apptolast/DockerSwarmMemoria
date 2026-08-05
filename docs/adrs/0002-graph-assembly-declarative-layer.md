@@ -184,6 +184,66 @@ relación, un error de dirección en esa cita es exactamente el tipo de fallo
 que "0 errores" debe cubrir — encontrarlo y corregirlo en la verificación
 final es el proceso funcionando como debe, no algo que convenga ocultar.
 
+## Prueba de mutación
+
+Añadida en una sesión posterior a la aceptación de este ADR — mismo
+contexto y misma sesión que el bug de dirección documentado arriba (ver
+`CHECKPOINTS.md`, C7, para el resumen y la tabla de los 4 ficheros del
+pilot completo). El porqué de `scripts/mutate.py` en vez de `mutmut` (bloqueo
+real encontrado y descartado) y el bug real encontrado en el propio mutador
+(caché de bytecode dando falsos negativos, corregido en
+`scripts/mutate.py`) están documentados una sola vez, en
+`docs/adrs/0001-rag-pilot-lexical-retrieval.md`, sección "Prueba de
+mutación" — aplican sin cambios a `scripts/graph/`, no se repiten aquí.
+
+### Resultados: `scripts/graph/build_graph.py`
+
+42 mutantes válidos, **19 muertos, score 45.2%**.
+
+### Resultados: `scripts/graph/query_graph.py`
+
+43 mutantes válidos, **20 muertos, score 46.5%**. Un superviviente cerrado
+aparte de los ya aceptados abajo: `load_graph()` (deserializa `rag/graph.json`
+de vuelta a un `MultiDiGraph`) y `graph_to_jsonable()` (su contraparte en
+`build_graph.py`) no los ejercitaba ningún caso de `test_graph.py` — la
+suite construye el grafo en memoria con `build_graph()` y consulta
+directamente sobre ese objeto, sin pasar nunca por el camino real de
+serializar a JSON y releer que sí usa `rag-pilot.yml` en producción
+(`build_graph.py` escribe `rag/graph.json`, `query_graph.py --graph` lo
+relee). Cerrado con un caso nuevo: construir el grafo, serializarlo con
+`graph_to_jsonable()`, escribirlo a un fichero temporal, releerlo con
+`load_graph()`, y comprobar que `impact(policy:compuertas-abiertas)` sobre
+el grafo recargado da exactamente las mismas 4 entidades que sobre el grafo
+en memoria (más una comprobación de `node_count`/`edge_count` del propio
+dict serializado). Mata el mutante de `return graph, data -> return None` en
+`load_graph()`; no mata los de `directed=True`/`multigraph=True` mutados a
+`False` en la misma línea (ver "Por qué no se persigue el 100%" abajo — el
+caso elegido no resulta ser sensible a esos dos parámetros concretos para
+esta consulta concreta).
+
+### Por qué no se persigue el 100%
+
+Mismas categorías que ADR-0001 (solo-CLI, ramas defensivas para entrada que
+el corpus real no produce, precisión de reporting), con dos matices propios
+del grafo:
+
+- **El bloque de despacho de `main()`** (`if args.command == "children":
+  ... elif ... == "impact": ...` en `query_graph.py`) es la mayor
+  concentración de supervivientes de los 4 ficheros (10 de 24) — es
+  íntegramente CLI, `test_graph.py` llama a `children`/`impact`/`path`/etc.
+  directamente, nunca a través de `args.command`.
+- **Parámetros de deserialización no siempre sensibles al caso de prueba
+  elegido** (`directed`/`multigraph` en `load_graph()`, ver arriba): cerrar
+  esto de verdad exigiría un caso que dependa explícitamente de una arista
+  paralela o de la direccionalidad para dar una respuesta distinta — más
+  ingeniería de caso de prueba de la que este pilot justifica hoy, con un
+  grafo de 21 nodos donde ese escenario no se ha dado todavía de forma
+  natural.
+
+No se persigue el 100% por el mismo motivo que en ADR-0001: la disciplina
+de proporción al tamaño real del corpus (21 nodos, 44 aristas) que ya rige
+el resto de esta decisión.
+
 ## Qué NO construye esta primera vuelta
 
 - **Capa 2 (extraída vía LLM)**: la síntesis describe "Extraction (Haiku).

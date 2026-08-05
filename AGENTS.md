@@ -87,10 +87,13 @@ Añadidas por la adopción del arnés (razonamiento completo en
 `docs/adopcion-templatessd.md`):
 
 - **No inventes comandos de verificación.** `harness.config.json` declara
-  los reales de este stack (`actionlint`). Si algo no tiene equivalente real
-  para este stack (la prueba de mutación), se marca explícitamente
-  "no aplica" con su motivo — nunca se simula con un script inventado solo
-  para rellenar el campo.
+  los reales de este stack: `actionlint` para `daily-memory.yml`
+  (YAML+bash, sin prueba de mutación real posible ahí — se marca
+  explícitamente "no aplica" con su motivo, nunca se simula con un script
+  inventado), y para `scripts/rag`/`scripts/graph` (Python real) también
+  tests de regresión y prueba de mutación real (`scripts/mutate.py` — ver
+  `CHECKPOINTS.md`, C7). El principio es el mismo en ambos casos: nunca
+  rellenar un campo con algo que no corre de verdad.
 - **Un cambio estructural al bot (nuevo campo de frontmatter, nueva regla de
   presupuesto, nuevo paso del workflow) se conversa antes de editar
   `program.md` directamente** — el espíritu de `spec_partner`, y ya lo exigía

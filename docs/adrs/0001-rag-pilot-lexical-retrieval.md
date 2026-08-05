@@ -167,6 +167,125 @@ recuperación puramente léxica, exactamente el tipo de caso donde una
 recuperación semántica (embeddings) sí distinguiría el significado del
 texto citado además de la superficie de las palabras.
 
+## Prueba de mutación
+
+Añadida en una sesión posterior a la aceptación de este ADR, al investigar
+qué llevar como mejora a la copia de `apptolast/TemplateSSDUncleBob` (tarea
+separada, ver `CHECKPOINTS.md` de ese momento). Resumen ejecutivo y tabla de
+los 4 ficheros (2 de `scripts/rag/`, 2 de `scripts/graph/`) en
+`CHECKPOINTS.md`, C7 — esta sección detalla solo `scripts/rag/`.
+
+### Por qué `scripts/mutate.py` y no `mutmut`
+
+El primer intento fue real, no descartado de antemano: se instaló `mutmut`
+3.7.0 (PyPI), que instala limpio en este sandbox. Bloqueo encontrado,
+reproducido: `mutmut` ejecuta los tests dentro de una copia aislada del
+repo (`mutants/`) y solo copia a esa copia los ficheros de test que vivan en
+`tests/`/`test/` o que coincidan con `test*.py` **en la raíz del repo**
+(código fuente de `mutmut`, `configuration.py`, lista `also_copy`) — no
+descubre tests anidados junto a su propio código fuente, que es exactamente
+cómo vive `test_calibration.py` en este repo. Copiarlo a mano vía
+`also_copy` resuelve eso, pero expone un segundo problema: `DEFAULT_DOCS_PATH`
+localiza el checkout hermano de `DockerSwarmDocs` con una ruta relativa de
+profundidad fija (`../../../DockerSwarmDocs/...`), y `mutants/` inserta un
+nivel de anidamiento adicional que rompe esa ruta. Arreglarlo habría exigido
+reestructurar dónde viven los tests de este repo, o cambiar cómo localizan
+el corpus hermano, solo para acomodar el sandboxing de una herramienta de
+terceros — la misma clase de sobre-ingeniería que este ADR ya evita en otros
+puntos (ver "Por qué léxico y no semántico" arriba).
+
+En vez de eso se adaptó, como `scripts/mutate.py`, el mutador propio que ya
+prescribe `TemplateSSDUncleBob`
+(`examples/python-notes-cli/tools/mutate.py`, MIT, Copyright (c) 2026 Cenit
+Digital): mutación a nivel de *token* (vía `tokenize`, nunca dentro de
+strings/comentarios), sin ninguna copia aislada del repo — muta el fichero
+real en su sitio y lo restaura siempre (`finally`, incluso ante Ctrl-C). Sin
+sandboxing no hay clase de bloqueo que evitar. Diferencia respecto al
+original: `--test-cmd` es obligatorio (este repo no usa `unittest discover`,
+sus tests son scripts propios con su propio código de salida).
+
+**Bug real encontrado en el propio mutador** (no en el código mutado): la
+primera corrida reportó un score mucho más bajo del real (6.8%, 3/44 en
+`query.py`) que contradecía una verificación manual independiente de uno de
+los mutantes. Causa: bytecode cacheado por CPython (`__pycache__/*.pyc`)
+sobrevivía entre dos mutantes sucesivos cuando la resolución de mtime del
+filesystem de este sandbox es más gruesa que el tiempo entre dos escrituras
+del bucle de mutación. Corregido en `scripts/mutate.py`
+(`PYTHONDONTWRITEBYTECODE=1` forzado en cada subproceso de test +
+`__pycache__` borrado antes de empezar — ver el docstring de
+`run_tests()`/`clear_pycache()` ahí). Todos los números de esta sección son
+posteriores a ese arreglo.
+
+### El hallazgo de alto valor: la doble guarda anti-alucinación
+
+`answer()` en `query.py` rechaza con `NO_EVIDENCE` cuando
+`best_score < threshold OR best_matched < effective_min_matched` — dos
+guardas independientes, unidas con `OR` a propósito (ver "Calibración del
+umbral" arriba: el caso "pablo" es exactamente el que exige la segunda
+guarda, no solo la primera). Mutar ese `or` a `and` sobrevivía: los 7 casos
+de calibración originales no incluían ninguno donde *solo una* de las dos
+condiciones fuera verdadera. Se buscó computacionalmente, entre los términos
+reales del corpus, uno cuyo score BM25 en solitario superase el umbral
+(`"exporter"`, aparece 1 vez, score 7.90) para construir
+`"¿Qué es un exporter en Marte?"` — `best_score` alto (score>threshold) pero
+`best_matched=1` (por debajo de `MIN_MATCHED_TERMS=2`). Verificado a mano
+(mutación temporal vía `sed`, revertida con `git checkout`) que este caso
+sí mata ese mutante antes de añadirlo a `CASES`. Es el único superviviente
+que se cerró con un caso nuevo — el resto se documenta abajo como aceptado.
+
+### Resultados: `scripts/rag/query.py`
+
+44 mutantes válidos, **18 muertos, score 40.9%**.
+
+### Resultados: `scripts/rag/build_index.py`
+
+47 mutantes válidos, **19 muertos, score 40.4%**. Un superviviente cerrado
+aparte del caso "exporter": `git_short_sha()` puede devolver `None` (vía
+`return out.stdout.strip()` mutado) sin que ningún caso de `CASES` lo
+notara — el propio formato de cita (`[source: path#section@sha]`) le
+recorta el sha a `top_chunk` en el test (`rsplit("@", 1)`), así que el valor
+de `corpus_commit` nunca se comprobaba de verdad. Cerrado con una aserción
+nueva en `test_calibration.py` (`corpus_commit` debe matchear
+`[0-9a-f]{7,40}`) — importa porque es exactamente el campo que sostiene la
+promesa de "cita verificable, no inventada" de todo este pilot.
+
+### Por qué no se persigue el 100%
+
+La mayoría de los supervivientes restantes caen en categorías aceptadas, no
+en descuidos:
+
+- **Solo-CLI**: el `main()`/`argparse` de cada script (flags, valores por
+  defecto, `--json`) no lo ejercita ninguna de las dos suites, que llaman a
+  las funciones de librería directamente — ejercitar el CLI exigiría
+  invocar cada script como subproceso desde el test, coste desproporcionado
+  para lo que aporta.
+- **Ramas defensivas para entrada malformada que el corpus real nunca
+  produce**: frontmatter sin `---` de cierre, `git rev-parse` fallando
+  sobre un repo real — solo se alcanzan con entrada que ninguna página real
+  de `DockerSwarmDocs` (revisada y fusionada por un humano) genera hoy.
+- **Precisión de redondeo/reporting** (`round(x, 4)` vs `round(x, 5)` en
+  campos como `best_score`): ninguna de las dos suites compara un score
+  contra un valor exacto (serían aserciones frágiles ante cualquier
+  recalibración del corpus) — solo contra el estado `CITED`/`NO_EVIDENCE` y,
+  cuando aplica, el chunk citado.
+- **Aritmética interna de BM25** (constantes de la fórmula IDF/numerador/
+  denominador): perturbaciones pequeñas no cruzan ningún umbral observable
+  para las preguntas de calibración actuales — comprobar la fórmula byte a
+  byte convertiría esta suite de regresión de comportamiento en una suite
+  unitaria exhaustiva, que este fichero declara explícitamente que no
+  pretende ser (ver su docstring).
+- **Límite exacto del umbral** (`<` vs `<=` en la comparación contra
+  `threshold`/`min_matched_terms`): solo se distingue con una pregunta cuyo
+  score caiga en el valor exacto del umbral — una aserción así dependería de
+  igualdad exacta entre floats, fragilidad que no compensa el valor que
+  aporta.
+
+No es una laguna de cobertura sin más: es la misma disciplina de
+proporción que ya aplica el resto de este ADR (ver "Por qué léxico y no
+semántico" arriba) — cerrar TODOS los supervivientes convertiría un pilot en
+un proyecto de otra escala, sin que el corpus real (75 chunks, 9 páginas) lo
+justifique todavía.
+
 ## Qué no incluye esta primera vuelta
 
 - **Ninguna llamada a un LLM para sintetizar una respuesta en prosa.** Este

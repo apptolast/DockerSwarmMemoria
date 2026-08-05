@@ -20,9 +20,8 @@ Uso:
 """
 from __future__ import annotations
 
-import subprocess
+import re
 import sys
-import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -50,6 +49,15 @@ CASES = [
      "CITED", "src/content/docs/compuertas-abiertas.md#resumen"),
     ("¿Qué receta de cocina recomienda este documento para hacer paella?",
      "NO_EVIDENCE", None),
+    ("¿Qué es un exporter en Marte?",
+     "NO_EVIDENCE", None),  # caso "exporter" — ver ADR, aísla la puerta MIN_MATCHED_TERMS
+                            # de la de threshold: "exporter" aparece 1 sola vez en el
+                            # corpus con score 7.90 (por ENCIMA de threshold=6.0 por sí
+                            # solo), y "marte" no aparece nunca — así que best_matched=1
+                            # con best_score alto. Encontrado con scripts/mutate.py: sin
+                            # este caso, mutar el `or` de answer() a `and` sobrevivía (ver
+                            # docs/adrs/0001-rag-pilot-lexical-retrieval.md, "Prueba de
+                            # mutación").
 ]
 
 # Limitación conocida y documentada (ver ADR, "Limitaciones conocidas"): una
@@ -75,6 +83,20 @@ def main() -> int:
     print(f"Índice reconstruido: {index['chunk_count']} chunks, corpus_commit={index['corpus_commit']}")
 
     failures = []
+
+    # El propio formato de cita ([source: path#section@sha]) le recorta el
+    # sha a `top_chunk` más abajo (`rsplit("@", 1)`) — así que ningún caso de
+    # CASES comprueba de verdad que `corpus_commit` sea un sha git real y no
+    # el fallback silencioso "TODO: verificar" (o None) que devuelve
+    # git_short_sha() si `git rev-parse` fallara sobre el checkout hermano.
+    # Encontrado con scripts/mutate.py (build_index.py:81 sobrevivía sin
+    # este chequeo) — ver docs/adrs/0001-rag-pilot-lexical-retrieval.md,
+    # "Prueba de mutación".
+    corpus_commit_ok = bool(re.fullmatch(r"[0-9a-f]{7,40}", index["corpus_commit"] or ""))
+    print(f"[{'OK ' if corpus_commit_ok else 'FAIL'}] corpus_commit {index['corpus_commit']!r} es un sha git real")
+    if not corpus_commit_ok:
+        failures.append("corpus_commit no es un sha git real")
+
     for question, expected_status, expected_top_chunk in CASES:
         result = answer(index, question, top_k=5, threshold=6.0, min_matched_terms=2)
         status = result["status"]
