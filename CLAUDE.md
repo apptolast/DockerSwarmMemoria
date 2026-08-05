@@ -64,16 +64,38 @@ directo del propio bot sobre su propio estado mutable, permitido por
 ## Comandos de verificación de este stack
 
 Declarados en `harness.config.json` (no hay `bin/harness` vendorizado en
-este repo — ver `docs/adopcion-templatessd.md`). El comando real de
-verificación es:
+este repo — ver `docs/adopcion-templatessd.md`). Para
+`.github/workflows/daily-memory.yml` (producción, YAML + bash embebido), el
+comando real de verificación sigue siendo:
 
 ```bash
 actionlint    # valida .github/workflows/daily-memory.yml (YAML + bash embebido)
 ```
 
-No hay `npm test`, `pytest` ni prueba de mutación: este repo no tiene
-`package.json` ni `src/` en un lenguaje de propósito general. Antes de
-proponer un cambio al workflow, confirma que `actionlint` queda limpio.
+Antes de proponer un cambio al workflow, confirma que `actionlint` queda
+limpio (0 warnings — incluye shellcheck sobre cada bloque `run:`).
+
+Desde el pilot de RAG + grafo (`scripts/rag/`, `scripts/graph/`), este repo
+SÍ tiene código Python real y SÍ tiene prueba de mutación real — la frase
+"no hay `pytest` ni prueba de mutación porque no hay `src/` en un lenguaje
+de propósito general" ya no es cierta para esas dos carpetas (sigue siendo
+cierta para `daily-memory.yml`, que no cambia). Comandos reales:
+
+```bash
+python3 scripts/rag/test_calibration.py     # regresión de calibración BM25
+python3 scripts/graph/test_graph.py          # regresión del grafo declarativo
+ruff check scripts/rag/ scripts/graph/ scripts/mutate.py   # lint
+
+# mutación (uno por fichero — no hay un único comando, ver harness.config.json → commands.mutate):
+python3 scripts/mutate.py scripts/rag/query.py --test-cmd "python3 scripts/rag/test_calibration.py"
+python3 scripts/mutate.py scripts/graph/query_graph.py --test-cmd "python3 scripts/graph/test_graph.py"
+```
+
+Detalle completo (por qué `scripts/mutate.py` y no `mutmut`, resultados,
+qué supervivientes se aceptan y por qué) en `CHECKPOINTS.md` C7 y en
+`docs/adrs/0001-rag-pilot-lexical-retrieval.md` /
+`docs/adrs/0002-graph-assembly-declarative-layer.md`, sección "Prueba de
+mutación" de cada una.
 
 ## Reglas duras (heredadas de `program.md`, no negociables)
 

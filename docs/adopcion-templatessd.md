@@ -158,15 +158,25 @@ comando **inventado** que esta adopción tiene mandato explícito de evitar.
 
 En su lugar, `harness.config.json` usa el escape hatch que el propio esquema
 de la plantilla ya provee para este caso: `rules.require_mutation_to_close:
-false` y `commands.mutate` vacío. La verificación real de este stack —
-`commands.test: "actionlint"` — cubre lo que sí es real: que el YAML es
-válido, que las expresiones de contexto de GitHub Actions existen, y (si
-`shellcheck` está instalado) que el bash embebido no tiene los errores más
-comunes de scripting. La verificación de más alto nivel —¿el bot realmente
-hace lo que dice `program.md`?— la dan los gates que ya existen en
-producción (circuit-breaker, PR-única-abierta, `verify-build`) y, sobre
-todo, la revisión humana de cada PR real, que es irremplazable por ninguna
-prueba de mutación.
+false` para `daily-memory.yml`. La verificación real de ese fichero —
+`actionlint` — cubre lo que sí es real: que el YAML es válido, que las
+expresiones de contexto de GitHub Actions existen, y (si `shellcheck` está
+instalado) que el bash embebido no tiene los errores más comunes de
+scripting. La verificación de más alto nivel —¿el bot realmente hace lo que
+dice `program.md`?— la dan los gates que ya existen en producción
+(circuit-breaker, PR-única-abierta, `verify-build`) y, sobre todo, la
+revisión humana de cada PR real, que es irremplazable por ninguna prueba de
+mutación.
+
+**Nota (sesión posterior a esta adopción, no reescrita aquí para no perder
+el razonamiento original — ver `CHECKPOINTS.md` C7 para el estado
+completo):** todo lo de arriba sigue siendo exactamente cierto para
+`daily-memory.yml`. Pero este repo ganó después código Python real
+(`scripts/rag/`, `scripts/graph/`, pilot de RAG + grafo — ver
+`docs/adrs/0001-*.md`/`0002-*.md`), que sí cumple las dos condiciones del
+primer párrafo de esta sección (lenguaje de propósito general, suite de
+tests real) — para esa parte, `commands.test` y `commands.mutate` de
+`harness.config.json` ya NO están vacíos ni se limitan a `actionlint`.
 
 ## Memoria organizacional: productor y ¿también consumidor?
 

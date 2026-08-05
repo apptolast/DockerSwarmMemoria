@@ -65,6 +65,33 @@ usa este bot para estructurar lo que extrae está en
 | [`.github/workflows/daily-memory.yml`](.github/workflows/daily-memory.yml) | El workflow diario: checkout de fuentes, cálculo del alcance (bash), paso de extracción real (`anthropics/claude-code-action`), apertura de PR contra `DockerSwarmDocs`, y registro/checkpoint. Implementado y en ejecución diaria desde el 2026-07-30. |
 | `memoria/` | Estado mutable propio del bot: `logs/` (un fichero por ejecución) y `estado/` (checkpoint incremental, el último commit de `DockerSwarmInfrastrcture` ya procesado). Con contenido real: hay un log por cada ejecución desde el 2026-07-30 y el checkpoint apunta al HEAD ya procesado. |
 
+## Pilot: RAG léxico + grafo de conocimiento (manual, no conectado a producción)
+
+Añadido en una sesión posterior a la adopción del arnés, **aditivo y de solo
+lectura**: no modifica `program.md`, `schema/graph-vocabulary.md` ni
+`.github/workflows/daily-memory.yml`, no escribe en
+`DockerSwarmInfrastrcture` ni en `DockerSwarmDocs`, y se dispara solo a mano
+(`workflow_dispatch`, nunca automático). Conectarlo algún día al workflow de
+producción, o portarlo a `Cenit-Digital/SistemaDeMemoriaUncleBob`, es una
+decisión futura y explícita de quien mantiene el repo — no algo que este
+pilot implique por sí mismo.
+
+| Fichero/carpeta | Qué es |
+| --- | --- |
+| [`scripts/rag/`](scripts/rag/README.md) | Recuperación léxica BM25 sobre el corpus de `DockerSwarmDocs` — cero dependencias externas. Por qué BM25 y no embeddings neuronales: [`docs/adrs/0001-rag-pilot-lexical-retrieval.md`](docs/adrs/0001-rag-pilot-lexical-retrieval.md). |
+| [`scripts/graph/`](scripts/graph/README.md) | Grafo de conocimiento declarativo (Capa 1: solo relaciones ya escritas a mano en el frontmatter, cero LLM) sobre el mismo corpus, usando el vocabulario de [`schema/graph-vocabulary.md`](schema/graph-vocabulary.md). Razonamiento: [`docs/adrs/0002-graph-assembly-declarative-layer.md`](docs/adrs/0002-graph-assembly-declarative-layer.md). |
+| [`.github/workflows/rag-pilot.yml`](.github/workflows/rag-pilot.yml) | Workflow manual (`workflow_dispatch`), permisos de solo lectura, para consultar los dos pilots de arriba desde GitHub Actions. |
+| `docs/adrs/` | Las dos ADR de arriba, con verificación real contra el corpus (commit `8eb4497`: 75 chunks indexados; grafo con 21 nodos y 44 aristas, 0 referencias colgantes). |
+| `rag/` | Artefactos generados (`index.json`, `graph.json`) — no comprometidos a git, se regeneran bajo demanda. |
+
+Ambos pilots citan siempre su fuente exacta (`[source: fichero.md#sección@commitsha]`
+para el RAG; el documento real que declaró cada relación para el grafo) y
+devuelven explícitamente "sin evidencia" o "sin camino" en vez de inventar
+una respuesta cuando no encuentran nada — mismo principio anti-alucinación
+que ya rige el resto de este bot (`program.md` §6, §7). Verificación
+ejecutable: `scripts/rag/test_calibration.py` y `scripts/graph/test_graph.py`
+(ver `harness.config.json` → `commands.test`).
+
 ## Secrets configurados
 
 Los dos secrets que necesita el workflow **existen desde el 2026-07-30**
