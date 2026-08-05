@@ -129,7 +129,7 @@ jobs:
 
           LOGS_DIR="memoria-bot/memoria/logs"
           CIRCUIT_BREAKER=false
-          LAST3="$(ls "$LOGS_DIR"/*.md 2>/dev/null | sort | tail -n 3 || true)"
+          LAST3="$(find "$LOGS_DIR" -maxdepth 1 -name '*.md' -type f 2>/dev/null | sort | tail -n 3 || true)"
           if [ "$(printf '%s\n' "$LAST3" | grep -c .)" -eq 3 ]; then
             ALL_FAIL=true
             PREV_LINE=""
